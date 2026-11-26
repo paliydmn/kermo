@@ -45,7 +45,7 @@ Kermo checks for a new version once a day and installs it with **Install and Rel
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
 - **Tools and watching.** A server's load as a live dashboard — CPU, memory, disks, traffic and the busiest processes as charts and tables, with a week of history — watched in the background with alerts, notifications and a menu bar item. Sites checks your web addresses from this Mac; Deployments, Firewall, Banned IPs and Server Info are lists with their actions. Every tool is a JSON preset: get more from the catalog or write your own. → [Tools](docs/tools.md)
 - **Tunnels.** Forward a server's database or web admin to `localhost`, or pick from the ports it listens on; its ports and tunnels are lists in a panel too. → [SSH tunnels](docs/tunnels.md)
-- **Terminal.** A shell in a drawer under the panels, the active one following its `cd`; SSH tabs, each split into up to four sessions side by side; Claude Code and other programs that use the mouse scroll and copy; ⌘↑ / ⌘↓ go from command to command, ⌘-click opens a printed path at its line; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
+- **Terminal.** A shell in a drawer under the panels, the active one following its `cd`; SSH tabs, each split into up to four sessions side by side; Claude Code and other programs that use the mouse scroll and copy; ⌘↑ / ⌘↓ go from command to command, ⌘-click opens a printed path at its line; a user menu, one command on several servers at once, and the `kermo` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
 - **Your own AI.** A chat beside the panels (⌃⌘I) with your own model — Anthropic, or an OpenAI-compatible server such as Ollama — your key in the Keychain, requests straight to your provider. **Ask** reads what you allow and answers, **Edit** proposes a change as a diff for the editor, **Agent** does a task within the scope you give it and asks before anything outside it; ✨ Explain where something fails. Once you allow it in Settings › AI, Claude Code in Kermo's terminal can use Kermo's tools under the same questions. → [AI: chat and agents](docs/ai.md)
 - **Production safety.** A production server is purple, asks before changes and logs what you did. Every question before a change reads the same way: the place in a PROD or ROOT strip, what changes, and the command exactly as it will run. → [Safety on servers](docs/safety.md)
 
@@ -82,7 +82,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 - [Viewer and editor](docs/viewer-editor.md): large files, hex, follow, syntax highlighting.
 - [Git](docs/git.md): status, diff, log, blame, stage, branches, commit, sync.
 - [Terminal and SSH sessions](docs/terminal.md): the ⌃O terminal, sessions side by side, shell integration.
-- [Commands, user menu and `fm`](docs/commands.md): ⌘E, F2, placeholders, the `fm` launcher.
+- [Commands, user menu and `kermo`](docs/commands.md): ⌘E, F2, placeholders, the `kermo` launcher.
 
 **Servers and administration**
 - [Servers and SSH](docs/servers.md): connect, save, lock, mark as production, copy your SSH key; a server's overview, services and containers.

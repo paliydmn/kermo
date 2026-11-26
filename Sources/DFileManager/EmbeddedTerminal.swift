@@ -395,12 +395,14 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// holding the terminal (vim, sudo's password prompt, cat) never gets the line: a new tab instead. Returns the view
     /// to focus; nil when the line or the folder can't be typed (`isTypeable`).
     func run(_ line: String, cwd: String) -> NSView? {
-        guard ShellContext.isTypeable(line), let cd = ShellContext.typedCd(cwd) else { return nil }
+        guard ShellContext.isTypeable(line), ShellContext.isTypeable(cwd) else { return nil }
         let shells = tabs.filter { $0.kind == .shell && $0.isRunning && $0.isAtPrompt }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
-            // ^U first (typedCd carries its own): a half-typed line would otherwise take the command as its tail.
-            t.view.type((t.shellCwd != Self.real(cwd) ? cd : "\u{15}") + line + "\r")
+            // ^U first: a half-typed line would otherwise take the command as its tail. Elsewhere: only once the shell
+            // is in `cwd`: the folder gone, or its `cd` failing, leaves the line untyped.
+            if t.shellCwd == Self.real(cwd) { t.view.type("\u{15}" + line + "\r") }
+            else { Task { if await cd(t, to: cwd) { t.view.type("\u{15}" + line + "\r") } } }
         } else {
             // Typed ahead: the pty holds it until the shell reads — the first prompt is unknowable (the child is the foreground
             // group from forkpty on, .zshrc still running). A .zshrc that flushes input loses it: a known limit.

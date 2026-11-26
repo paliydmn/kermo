@@ -121,6 +121,8 @@ Press ⇧⌘P (or F9, ⌥9; from the terminal ⇧⌘P), or click **Search or jum
 
 **⇥ goes into** a row with more behind it (⇥ on its right): a server lists its [overview](servers.md#the-server-as-a-place) — nothing is sent for it — then **Services**, **Containers**, **Ports** or **Tunnels** list what they list, read as the list in a panel reads it (Touch ID first on a locked server, "Looking at services…", ⎋ stops it), and a row there lists its actions: its key on the right, why it can't now under one that can't, red what can't be undone. Chips before the field say where you are: **web-01 › Services › nginx ›**, the server's in its color. ↩ does on each row what ↩ does on it in a panel — an action asks first where it would anyway, over the search, and the line under the rows says how it went; a row's keys (⌘R, ⌘L, ⌘C) work without ⇥. ⌘↩ shows the list you're in in the other panel, as it is, without reading it again. ⌫ on an empty field or ⎋ goes back a level, to what you typed there; ⎋ at the top closes.
 
+A server's name typed from its start (`vault`, `web`) puts that server first and chooses it, unless a command's own name starts so too (`co` is still Copy).
+
 Empty, it lists what you choose most and lately (**Recent**: each choice counts, older ones fade), then Favorites and servers; ✕ or ⌘⌫ takes a row out of Recent.
 
 ![Search, empty: web-01 under Recent with its ✕, then Favorites, then the other servers with their chips; the action bar says ↩ Open, ⇥ Into, ⌘↩ Other Panel, ⎋ Close](images/search.png)
@@ -139,7 +141,7 @@ The lists that ask you to choose — Search (⇧⌘P, its rows under group heade
 
 Every command is in the menu bar, in groups, with its first shortcut. Switches have ✓ while they're on.
 
-- **Kermo:** About Kermo, Check for Updates…, Support Kermo…, Install “fm” Command, and **Configuration ▸**: the files to edit (keymap, user menu, validators, filter presets), Open Config Folder, Reload Config, Check for Updates Automatically.
+- **Kermo:** About Kermo, Check for Updates…, Support Kermo…, Install “kermo” Command, and **Configuration ▸**: the files to edit (keymap, user menu, validators, filter presets), Open Config Folder, Reload Config, Check for Updates Automatically.
 - **File:** View, Edit, Quick Look, Get Info; Copy To…, Move To…, Rename…; New Folder…, New File…, **Links ▸**; Move to Trash, Put Back, Delete Permanently…; Compress…, Extract…, **Split & Combine ▸**; User Menu…, Open in Terminal, Reveal in Finder; Eject and Unmount; **As Administrator ▸**.
 - **Edit:** Undo, Cut, Copy, Paste, Find… for text; Copy Path, Copy Name, Move Here for files.
 - **Mark:** marking and masks; Mark Differences, Synchronize Folders…, Compare Files; **Tags ▸**.

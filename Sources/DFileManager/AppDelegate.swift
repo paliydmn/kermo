@@ -238,7 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         openPending()
     }
 
-    /// At the end of the launch, after the editor's restore (no second "Untitled 1" beside it): what `fm`, Finder or
+    /// At the end of the launch, after the editor's restore (no second "Untitled 1" beside it): what `kermo`, Finder or
     /// kermo:// asked for before.
     func openPending() {
         show(pendingOpen)
@@ -273,12 +273,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var terminalActive: Bool { terminal?.isShown == true && (terminal.isFull || terminalFocusedLast) }
     private var terminalFocusedLast = false
 
-    // MARK: - Opening paths (`fm`, Finder's Open With)
+    // MARK: - Opening paths (`kermo`, Finder's Open With)
 
     private var pendingOpen: [URL] = []
     private var pendingKermo: [Bool] = []   // kermo://new (true) and kermo://show at launch
 
-    /// Paths (`fm`, Finder) to the panels; kermo:// to the editor, never to the panels or the main window.
+    /// Paths (`kermo`, Finder) to the panels; kermo:// to the editor, never to the panels or the main window.
     func application(_ application: NSApplication, open urls: [URL]) {
         let kermo = urls.filter { $0.scheme?.lowercased() == "kermo" }, files = urls.filter { $0.scheme?.lowercased() != "kermo" }
         let actions = kermo.compactMap(Self.kermoAction)
@@ -328,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Self.sheet(a, on: window) { if $0 == 1 { NSWorkspace.shared.activateFileViewerSelecting(cut.map { URL(fileURLWithPath: $0) }) } }
     }
 
-    /// Window ▸ Main Window (⌘0) and `fm`: back to the panels from a viewer or editor, or after closing them.
+    /// Window ▸ Main Window (⌘0) and `kermo`: back to the panels from a viewer or editor, or after closing them.
     @objc func showMainWindow(_ sender: Any?) { window.makeKeyAndOrderFront(nil) }
 
     func applicationDidResignActive(_ notification: Notification) { keyBar.reset() }

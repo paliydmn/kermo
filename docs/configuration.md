@@ -10,7 +10,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 
 | Tab | What's there |
 |---|---|
-| General | A [new editor document from any app](viewer-editor.md#from-any-app) (`editorHotKey`: **Record…**, off at first); open Kermo at login (as macOS has it: System Settings ▸ General ▸ Login Items); Show hidden files (`showHidden`); Dates: `Today 13:33` or `2026-10-27 13:33` (`isoDates`); Check for updates once a day (`updateCheckOff`); install the `fm` command |
+| General | A [new editor document from any app](viewer-editor.md#from-any-app) (`editorHotKey`: **Record…**, off at first); open Kermo at login (as macOS has it: System Settings ▸ General ▸ Login Items); Show hidden files (`showHidden`); Dates: `Today 13:33` or `2026-10-27 13:33` (`isoDates`); Check for updates once a day (`updateCheckOff`); install the `kermo` command |
 | Appearance | The themes, each with a preview: a click uses it (`theme`; **View ▸ Theme…** previews them as you move through the list); Permissions & Owner columns (`showPerms`); how long to hold a modifier before the key bar shows its keys (`keyBarHoldDelay`) |
 | Keys | Every command with its keys; see [Keymap](#keymap) |
 | Terminal | Font and size (`terminalFont`, `terminalFontSize`); the drawer's height (`terminalDrawerHeight`, by dragging its line); Option is Meta (`terminalOptionIsMeta`); Selecting text copies it and Right-click pastes (`terminalCopyOnSelect`, `terminalRightClickPaste`: both use the clipboard); the app for ⌥⌘T and ⌘↩ (`terminalBundleID`) |

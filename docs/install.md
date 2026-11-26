@@ -52,5 +52,5 @@ You need the Command Line Tools; Xcode isn't required. See [Contributing](../CON
 2. Optional, to remove everything it kept:
    - the folder `~/.config/dfilemanager` (settings, saved servers, file history, production log);
    - its options: `defaults delete com.dmn.dfilemanager`;
-   - the `fm` link in `/usr/local/bin`, if you installed it;
+   - the `kermo` link in `/usr/local/bin`, if you installed it;
    - the Keychain items "Kermo: …" and "Kermo sudo: …" (Keychain Access).

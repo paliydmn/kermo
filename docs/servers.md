@@ -169,7 +169,7 @@ A row shows what is open on the server:
 - `⇄` for tunnels that are listening, in green (red when one failed);
 - a lock on the icon for a locked server, a red ◆ when the last connection failed (its tooltip says why), a purple icon and the PROD chip for a production server. The chip gives way to the name when the row runs out of room: in a narrow sidebar, or at the default width once an open session's icon stands beside it; the purple icon stays.
 
-Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a click shows its [overview](#the-server-as-a-place) in the active panel, which sends nothing, and a double-click (or ↩ with the keys in the sidebar) opens its files in its start folder; **SSH** under the mouse, the row's menu and ⌘K open a shell. The tooltip says all of it.
+Under the mouse the row shows, narrow at its right end so the name keeps its start, **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a click shows its [overview](#the-server-as-a-place) in the active panel, which sends nothing, and a double-click (or ↩ with the keys in the sidebar) opens its files in its start folder; **SSH** under the mouse, the row's menu and ⌘K open a shell. The tooltip says all of it.
 
 ## Lock a server
 

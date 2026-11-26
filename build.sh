@@ -26,7 +26,7 @@ mkdir -p $APP/Contents/MacOS
 cp $BIN $APP/Contents/MacOS/Kermo
 mkdir -p $APP/Contents/Resources
 for b in $BIN_DIR/*.bundle(N); do cp -R $b $APP/Contents/Resources/; done   # SwiftPM resource bundles
-cp bin/fm $APP/Contents/Resources/
+cp bin/kermo $APP/Contents/Resources/
 ICNS=.build/AppIcon.icns
 if [[ ! -e $ICNS || tools/icon.swift -nt $ICNS || tools/icon-art.png -nt $ICNS ]]; then   # redraw only when the icon script or its artwork changes
   SET=.build/AppIcon.iconset; rm -rf $SET; mkdir -p $SET

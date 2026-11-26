@@ -702,7 +702,9 @@ extension ServerLockTests {
         c = app.shellContext
         #expect(c.dir == "." && c.otherDir == nil && c.cursor == "nginx" && c.targets == ["nginx"] && c.server == s.target)
         app.window.makeFirstResponder(b.table)
-        #expect(app.shellContext.otherDir == a.path, "as before: the folder behind the other panel's list (D-219)")
+        #expect(app.shellContext.otherDir == nil, "not the folder hidden behind the other panel's list")
+        app.runShell("true %D", in: .window)
+        #expect(b.statusText == "%D: the other panel shows a list, not a folder")
 
         b.loadRemote(.local(), dir: dir + "/sub", select: nil)
         await until { b.remote?.dir == dir + "/sub" }

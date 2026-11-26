@@ -14,6 +14,17 @@ Release:
 
 ## [Unreleased]
 
+### Changed
+- The shell command is now **`kermo`** (**Kermo ▸ Install “kermo” Command**): macOS 27 has its own `fm`, which Kermo's old link hid. If you installed `fm`, choose that menu item once: it removes the old `fm` link when it points into Kermo, and no other. → [The `kermo` command](docs/commands.md#the-kermo-command)
+- In ⇧⌘P a server's name typed from its start comes first and is chosen, not a command found by a few of its letters. → [Search](docs/window.md#search)
+- A server row's buttons under the mouse are narrower, so its name keeps more of its start and a double-click on it opens the files. → [Servers](docs/servers.md)
+
+### Fixed
+- ⌘E ↩ and Execute in Terminal no longer run the command in the wrong folder: when the shell couldn't go to the panel's or the file's folder (gone, no access), nothing is typed after the `cd`. → [Command line](docs/commands.md#command-line)
+- `%D` no longer stands for the folder hidden behind the other panel's list (Services, Containers, an overview): the command doesn't run and the status line says why.
+- A Tools tab on a server with no connection said "Connecting…" for ever; it now says the server isn't connected and offers **Connect**. → [Tools](docs/tools.md)
+- The editor window could crash while its toolbar changed for a server's file or Compare.
+
 ## [2.2.1] - 2026-11-26
 
 ### Added

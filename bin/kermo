@@ -1,0 +1,12 @@
+#!/bin/sh
+# kermo [path [path2]] — show a folder (default: the current one) in Kermo; path2 goes to the other panel.
+# A file opens its folder with the cursor on it. kermo --new — a new editor document.
+# Install: Kermo ▸ Install “kermo” Command.
+if [ $# -eq 1 ] && [ "$1" = --new ]; then
+    exec open -b com.dmn.dfilemanager kermo://new   # this fixed URL only: nothing of yours goes with it
+fi
+for a; do
+    case "$a" in -*) echo "usage: kermo [path [path2]] | kermo --new" >&2; exit 2 ;; esac   # never one of open's options (-n: a second Kermo)
+done
+[ $# -eq 0 ] && set -- .
+exec open -b com.dmn.dfilemanager "$@"

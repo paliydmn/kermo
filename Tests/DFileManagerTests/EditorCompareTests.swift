@@ -472,7 +472,11 @@ extension EditorWindowTests {
         a.terminal = EmbeddedTerminal(covering: panels)
         var typed: [(tab: UUID, text: String)] = []
         let typing = EmbeddedTerminal.typing, log = AuditLog.path
-        EmbeddedTerminal.typing = { t, b in typed.append((t.id, String(decoding: b, as: UTF8.self))) }
+        EmbeddedTerminal.typing = { t, b in   // a `cd` reaches the shell: Execute waits till the kernel shows it there
+            let s = String(decoding: b, as: UTF8.self)
+            typed.append((t.id, s))
+            if s.hasPrefix("\u{15} cd ") { t.view.type(b) }
+        }
         AuditLog.path = dir + "/audit.jsonl"
         defer {
             (EmbeddedTerminal.typing, AuditLog.path) = (typing, log)
@@ -529,6 +533,15 @@ extension EditorWindowTests {
         #expect(await send("ls", run: false, from: c3, in: dir + "/three") != .notSent("") && typed.last?.tab == shell.id)
         #expect(await send("ls", run: true, from: c3, in: dir + "/three") != .notSent(""))
         #expect(typed[typed.count - 2].text == "\u{15} cd \(ShellContext.quote(dir + "/three"))\r", "in its folder, not where the Send found the shell")
+
+        // Its folder gone: no `cd`, nothing runs where the shell still is.
+        try FileManager.default.createDirectory(atPath: dir + "/four", withIntermediateDirectories: true)
+        try put("rm -f x\n", dir + "/four/d.sh")
+        let d4 = try await opened(dir + "/four/d.sh")
+        try FileManager.default.removeItem(atPath: dir + "/four")
+        let k4 = typed.count
+        #expect(await send("rm -f x", run: true, from: d4, in: dir + "/four") == .notSent("The shell couldn't go to four — nothing run"))
+        #expect(typed.count == k4)
         #expect(AppDelegate.ownTabs.object(forKey: c3) as UUID? == shell.id && AppDelegate.ownTabs.object(forKey: e) == nil && AppDelegate.ownTabs.object(forKey: b) == nil,
                 "one tab, one document's: the others' folder is gone from it")
 

@@ -102,7 +102,7 @@ extension AppDelegate {
         cmd("app.support", "Support Kermo…", [], menu: "Kermo", group: 2, aliases: "donate sponsor ko-fi") { _ in NSWorkspace.shared.open(supportPage) },
         cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo/Configuration", group: 5, aliases: "update daily",
             on: { !$0.defaults.bool(forKey: "updateCheckOff") }) { $0.toggleUpdateChecks() },
-        cmd("app.installCLI", "Install “fm” Command", [], menu: "Kermo", group: 3) { $0.installCLI() },
+        cmd("app.installCLI", "Install “kermo” Command", [], menu: "Kermo", group: 3) { $0.installCLI() },
         cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Help", group: 1, short: "Shortcuts", aliases: "help shortcuts cheat sheet") { app in
             if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window), let menu = NSApp.mainMenu {   // a viewer's, an editor's
                 return KeyHelp.show(over: w, commands: [], fixed: app.keySections(over: w, menu: menu))

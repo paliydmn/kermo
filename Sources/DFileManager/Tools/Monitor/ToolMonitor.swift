@@ -307,7 +307,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                     return
                 }
             } else if !has(t) {
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.ended(key, "not connected", cancel: cancel) } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.ended(key, Self.notConnected, cancel: cancel) } }
                 return
             }
             var reader = ToolRunOutput(nonce: payload.nonce), split = ToolLines()
@@ -706,9 +706,13 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         changed()
     }
 
-    /// "Needs login": the lock, then the login as any look's, then the channel.
+    /// A live tab's server with no connection up: a tab that isn't watched never logs in by itself (no question
+    /// unasked) — it waits for a panel's connection, or Connect.
+    static let notConnected = "not connected"
+
+    /// "Needs login", or a live tab's "not connected": the lock, then the login as any look's, then the channel.
     func connect(_ t: SFTPTarget) {
-        guard let s = server(t), s.needsLogin, !s.connecting else { return }
+        guard let s = server(t), s.needsLogin || s.error == Self.notConnected, !s.connecting else { return }
         s.connecting = true   // no quiet login meanwhile: a reconcile would find it refused and say "needs login" again
         changed()
         let target = s.target, login = Self.login

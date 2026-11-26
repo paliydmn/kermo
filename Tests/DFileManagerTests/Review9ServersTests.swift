@@ -352,7 +352,7 @@ extension ServerLockTests {
     #expect(quiet.toolTip?.hasPrefix("web\nConnection refused\n") == true)
 
     // Tunnels listening, none failed: green, as what's open. The actions take clicks around their icons, as tall as a
-    // row lets them.
+    // row lets them, narrow at the row's end: a 150-pt row keeps "db-main-01" over 60 pt under the mouse (D-148).
     let up = ServerRow(target: s.target, saved: s, title: "db", tunnels: ["Postgres"])
     let upView = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(up))) as? NSStackView)
     #expect((upView.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.map { ($0 as? NSButton)?.contentTintColor } == [.systemGreen])
@@ -362,6 +362,12 @@ extension ServerLockTests {
         upView.frame = NSRect(x: 0, y: 0, width: 260, height: height)
         upView.layoutSubtreeIfNeeded()
         let sizes = actions.arrangedSubviews.map { $0.alignmentRect(forFrame: $0.frame).size }   // the frame takes clicks a bit past it
-        #expect(sizes.allSatisfy { $0.width >= 22 && $0.height == side }, "\(height): \(sizes)")
+        #expect(sizes.allSatisfy { $0.width >= 18 && $0.height == side }, "\(height): \(sizes)")
     }
+    let long = ServerRow(target: SFTPTarget(host: "db-main-01"), title: "db-main-01")
+    let longView = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(long))) as? NSStackView)
+    longView.arrangedSubviews.forEach { $0.isHidden = $0 is ServerChips }   // under the mouse
+    longView.frame = NSRect(x: 0, y: 0, width: 150, height: 22)
+    longView.layoutSubtreeIfNeeded()
+    #expect((longView.arrangedSubviews.first { $0 is ServerName }?.frame.width ?? 0) > 60)
 }

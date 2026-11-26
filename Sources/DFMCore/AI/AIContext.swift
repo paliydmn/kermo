@@ -66,7 +66,7 @@ public struct AIContext: Sendable, Equatable {
     /// ⌘E / F2's placeholders: the active panel's folder and names; %D only when the other panel's folder is on the
     /// same machine (as the same user or not), and never from a list.
     public var shell: ShellContext {
-        let there = active.list == nil ? other.folder.flatMap { $0.server?.asRoot(false) == active.server?.asRoot(false) ? $0.dir : nil } : nil
+        let there = active.list == nil && other.list == nil ? other.folder.flatMap { $0.server?.asRoot(false) == active.server?.asRoot(false) ? $0.dir : nil } : nil
         return ShellContext(dir: active.dir, otherDir: there, cursor: active.cursor, targets: active.targets, server: active.server)
     }
 }

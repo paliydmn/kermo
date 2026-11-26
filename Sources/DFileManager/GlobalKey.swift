@@ -1,7 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-// The editor from any app: the global shortcut, the Dock menu, kermo://new and kermo://show, `fm --new`. They all go
+// The editor from any app: the global shortcut, the Dock menu, kermo://new and kermo://show, `kermo --new`. They all go
 // through `AppDelegate.editorFromOutside`.
 
 /// The global shortcut for a new editor document: a Carbon hot key — no Accessibility or Input Monitoring, nothing
@@ -122,7 +122,7 @@ enum GlobalKey {
 }
 
 extension AppDelegate {
-    /// From outside Kermo — the global shortcut, the Dock menu, kermo://new, `fm --new` (`new`); kermo://show and the
+    /// From outside Kermo — the global shortcut, the Dock menu, kermo://new, `kermo --new` (`new`); kermo://show and the
     /// Dock's Show Editor (not `new`): the editor window in front, Kermo active, the text in focus. `new` makes an
     /// Untitled unless the tab shown is one with nothing in it yet (a page opening kermo://new again and again adds no
     /// tabs, a second press while the window comes up neither). The main window stays as it was.

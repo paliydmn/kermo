@@ -372,6 +372,33 @@ extension ServerLockTests {
         #expect(view.banner.isHidden)
     }
 
+    /// A live tab (not watched) whose server has no connection up never logs in by itself: it says so and offers
+    /// Connect — the login as any look's — never "Connecting…" for ever.
+    @Test func aLiveTabWithNoConnectionOffersConnect() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.hasMaster = { _ in true } }
+        try await watching(app, bench)
+        ToolRunner.hasMaster = { _ in false }
+        nonisolated(unsafe) var logins: [Bool] = []
+        ToolMonitor.login = { _, quiet in
+            logins.append(quiet)
+            ToolRunner.hasMaster = { _ in true }
+        }
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        let view = try #require(live(page))
+        await toolsUntil { view.banner.stringValue == "localhost isn't connected." }
+        let s = try #require(app.tools.monitor.server(.local()))
+        #expect(view.banner.stringValue == "localhost isn't connected." && !view.connectButton.isHidden && logins.isEmpty, "\(view.banner.stringValue)")
+
+        press(view.connectButton)
+        await toolsUntil { s.tools["pulse"]?.history.last != nil }
+        #expect(logins == [false] && s.channel != nil && view.connectButton.isHidden)
+        #expect(view.banner.isHidden)
+    }
+
     /// A locked server is watched read-only, without Touch ID; its connection stays in use; the tab says so.
     @Test func aLockedServerIsWatchedWithoutTouchID() async throws {
         let (app, _, _, done) = try toolsApp()

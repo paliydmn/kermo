@@ -209,6 +209,13 @@ private func tempDir(_ name: String) throws -> String {
     #expect(shell.shellCwd == other && term.tabs.count == 1)
     await atPrompt(shell)
 
+    // The folder gone: nothing typed (the command would run where the shell still is); the next one in place runs.
+    try #require(term.run("touch m-gone", cwd: dir + "/gone") != nil)
+    try #require(term.run("touch m-after", cwd: other) != nil)
+    await until("m-after") { FileManager.default.fileExists(atPath: other + "/m-after") }
+    #expect(!text(shell).contains("m-gone"))
+    await atPrompt(shell)
+
     // A program has the terminal: the command goes to a new tab, the program gets nothing.
     shell.view.send(txt: "cat\r")
     await until("cat has the terminal") { !shell.isAtPrompt }

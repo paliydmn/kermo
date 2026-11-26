@@ -52,7 +52,7 @@ extension AppDelegate {
             ("Updates", [
                 SettingsRow(title: "Check for updates once a day", note: "One request to GitHub a day, with nothing in it but Kermo's version",
                             key: "updateCheckOff", control: .command("app.update.auto")),
-                SettingsRow(title: "“fm” command", note: "Open Kermo from the shell: fm ~/a ~/b", control: .buttons([("Install…", "app.installCLI")])),
+                SettingsRow(title: "“kermo” command", note: "Open Kermo from the shell: kermo ~/a ~/b", control: .buttons([("Install…", "app.installCLI")])),
             ]),
         ]),
         SettingsTab(title: "Appearance", symbol: .appearance, groups: [
