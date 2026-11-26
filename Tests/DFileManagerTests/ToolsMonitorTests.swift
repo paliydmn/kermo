@@ -383,6 +383,7 @@ extension ServerLockTests {
         nonisolated(unsafe) var logins: [Bool] = []
         ToolMonitor.login = { _, quiet in
             logins.append(quiet)
+            if logins.count == 1 { throw SFTPError(message: "Permission denied") }   // the first Connect: a wrong password
             ToolRunner.hasMaster = { _ in true }
         }
         ToolsWindow.show(app, server: .local())
@@ -393,9 +394,12 @@ extension ServerLockTests {
         let s = try #require(app.tools.monitor.server(.local()))
         #expect(view.banner.stringValue == "localhost isn't connected." && !view.connectButton.isHidden && logins.isEmpty, "\(view.banner.stringValue)")
 
+        press(view.connectButton)   // refused: back to "isn't connected", Connect again — never stuck without it
+        await toolsUntil { logins.count == 1 && view.banner.stringValue == "localhost isn't connected." && !view.connectButton.isHidden }
+        #expect(view.banner.stringValue == "localhost isn't connected." && !view.connectButton.isHidden, "\(view.banner.stringValue)")
         press(view.connectButton)
         await toolsUntil { s.tools["pulse"]?.history.last != nil }
-        #expect(logins == [false] && s.channel != nil && view.connectButton.isHidden)
+        #expect(logins == [false, false] && s.channel != nil && view.connectButton.isHidden)
         #expect(view.banner.isHidden)
     }
 

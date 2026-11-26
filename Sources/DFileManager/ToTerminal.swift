@@ -11,7 +11,7 @@ extension EmbeddedTerminal.Tab {
     /// program — the only sign the server gives: a shell or a REPL (mysql) does, vim, less, sudo's password prompt and a
     /// running command don't. Which shell it is (after a `sudo -i` or an `ssh` onward) it doesn't tell.
     var takesText: Bool {
-        guard isRunning else { return false }
+        guard isRunning, !entering else { return false }
         if host == nil { return isAtPrompt }
         guard let t = view.terminalInputStateSnapshot() else { return false }
         return t.bracketedPasteMode && !t.isAlternateBuffer
@@ -34,14 +34,17 @@ extension EmbeddedTerminal {
     }
 
     /// Types a `cd` to `dir` into the local shell `t` and waits (5 s at most: a shell still starting) for the kernel to
-    /// show the shell there. False — the folder is gone or can't be entered (nothing typed then), a hook refused, the
-    /// name can't be typed: type nothing after it, or the command runs where the shell still is (`cd x && line`
-    /// wouldn't do: `line`'s own `||` or `;` would run anyway).
-    func cd(_ t: Tab, to dir: String, typing: @MainActor (Tab, [UInt8]) -> Void = { $0.view.type($1) }) async -> Bool {
-        var isDir: ObjCBool = false
-        guard let line = ShellContext.typedCd(dir), FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
-              access(dir, X_OK) == 0 else { return false }
+    /// show the shell there; the tab is busy meanwhile (`entering`). False — the folder is gone or can't be entered
+    /// (the shell's `cd` says so, no wait), a hook refused, the name can't be typed: type nothing after it, or the
+    /// command runs where the shell still is (`cd x && line` wouldn't do: `line`'s own `||` or `;` would run anyway).
+    /// `typing`: tests record Execute's own.
+    func enter(_ t: Tab, _ dir: String, typing: @MainActor (Tab, [UInt8]) -> Void = { $0.view.type($1) }) async -> Bool {
+        guard let line = ShellContext.typedCd(dir) else { return false }
         typing(t, Array(line.utf8))
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue, access(dir, X_OK) == 0 else { return false }
+        t.entering = true
+        defer { t.entering = false }
         let want = Self.real(dir), end = Date().addingTimeInterval(5)
         while t.shellCwd != want {
             guard Date() < end, tabs.contains(where: { $0 === t }) else { return false }
@@ -139,7 +142,7 @@ extension AppDelegate {
         // Execute in a shell of this Mac's that isn't this text's yet, elsewhere: its folder first.
         if run, user == nil, t !== mineNow, t.shellCwd != EmbeddedTerminal.real(dir) {
             guard ShellContext.isTypeable(dir) else { return .notSent("A control character in the folder's name — nothing sent") }
-            guard await terminal.cd(t, to: dir, typing: EmbeddedTerminal.typing) else { return .notSent("The shell couldn't go to \((dir as NSString).lastPathComponent) — nothing run") }
+            guard await terminal.enter(t, dir, typing: EmbeddedTerminal.typing) else { return .notSent("The shell couldn't go to \((dir as NSString).lastPathComponent) — nothing run") }
         }
         EmbeddedTerminal.typing(t, bytes)
         if run, let user { AuditLog.write(user, "command", paths: [path].compactMap { $0 }, command: body, exit: nil) }

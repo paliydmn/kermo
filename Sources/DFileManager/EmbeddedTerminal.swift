@@ -22,6 +22,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         var reconnect: NSButton?
         var command: String?      // SSH: what to run instead of a login shell, once
         var cwd: String?          // the folder its shell last told (OSC 7); SSH: on the server
+        var entering = false      // a `cd` typed and not seen done (`enter`): busy — a line now would run before it
         /// What happened in it while it wasn't shown (a tab behind another, a pane under a zoom): until it shows again.
         var news: News?
         enum News { case output, bell }
@@ -396,13 +397,13 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// to focus; nil when the line or the folder can't be typed (`isTypeable`).
     func run(_ line: String, cwd: String) -> NSView? {
         guard ShellContext.isTypeable(line), ShellContext.isTypeable(cwd) else { return nil }
-        let shells = tabs.filter { $0.kind == .shell && $0.isRunning && $0.isAtPrompt }
+        let shells = tabs.filter { $0.kind == .shell && $0.isRunning && $0.isAtPrompt && !$0.entering }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
             // ^U first: a half-typed line would otherwise take the command as its tail. Elsewhere: only once the shell
-            // is in `cwd`: the folder gone, or its `cd` failing, leaves the line untyped.
+            // is in `cwd`: the folder gone, or its `cd` failing, leaves the line untyped (the shell says why).
             if t.shellCwd == Self.real(cwd) { t.view.type("\u{15}" + line + "\r") }
-            else { Task { if await cd(t, to: cwd) { t.view.type("\u{15}" + line + "\r") } } }
+            else { Task { if await enter(t, cwd) { t.view.type("\u{15}" + line + "\r") } } }
         } else {
             // Typed ahead: the pty holds it until the shell reads — the first prompt is unknowable (the child is the foreground
             // group from forkpty on, .zshrc still running). A .zshrc that flushes input loses it: a known limit.

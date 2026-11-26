@@ -534,14 +534,15 @@ extension EditorWindowTests {
         #expect(await send("ls", run: true, from: c3, in: dir + "/three") != .notSent(""))
         #expect(typed[typed.count - 2].text == "\u{15} cd \(ShellContext.quote(dir + "/three"))\r", "in its folder, not where the Send found the shell")
 
-        // Its folder gone: no `cd`, nothing runs where the shell still is.
+        // Its folder gone: the `cd` (its error on screen), and nothing after it — it would run where the shell still is.
         try FileManager.default.createDirectory(atPath: dir + "/four", withIntermediateDirectories: true)
         try put("rm -f x\n", dir + "/four/d.sh")
         let d4 = try await opened(dir + "/four/d.sh")
         try FileManager.default.removeItem(atPath: dir + "/four")
         let k4 = typed.count
         #expect(await send("rm -f x", run: true, from: d4, in: dir + "/four") == .notSent("The shell couldn't go to four — nothing run"))
-        #expect(typed.count == k4)
+        #expect(typed.count == k4 + 1 && typed.last?.text.hasPrefix("\u{15} cd ") == true, "the cd only")
+        await until("cd done") { shell.isAtPrompt }
         #expect(AppDelegate.ownTabs.object(forKey: c3) as UUID? == shell.id && AppDelegate.ownTabs.object(forKey: e) == nil && AppDelegate.ownTabs.object(forKey: b) == nil,
                 "one tab, one document's: the others' folder is gone from it")
 

@@ -399,4 +399,6 @@ extension EditorWindowTests {
     #expect(AppDelegate.isOldFmLink("/Applications/DFileManager.app/Contents/Resources/fm"), "the app's first name: the link points at nothing now")
     #expect(!AppDelegate.isOldFmLink("/usr/bin/fm") && !AppDelegate.isOldFmLink("/Applications/Other.app/Contents/Resources/fm"))
     #expect(!AppDelegate.isOldFmLink("/Applications/Kermo.app/Contents/Resources/kermo"))
+    #expect(!AppDelegate.isOldFmLink("/Users/me/Kermo-old/Other.app/Contents/Resources/fm"), "the bundle's own name, not a folder above it")
+    #expect(AppDelegate.isOldFmLink("/Users/me/Apps/Kermo 2.app/Contents/Resources/fm"))
 }

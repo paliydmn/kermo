@@ -131,6 +131,8 @@ extension AppDelegate {
 
     /// Where an `fm` link from before the rename points: into Kermo's (or DFileManager's, its first name) bundle.
     nonisolated static func isOldFmLink(_ destination: String) -> Bool {
-        destination.hasSuffix(".app/Contents/Resources/fm") && ["/Kermo", "/DFileManager"].contains { destination.contains($0) }
+        let parts = destination.split(separator: "/")
+        guard parts.suffix(3).elementsEqual(["Contents", "Resources", "fm"]), let app = parts.dropLast(3).last else { return false }
+        return app.hasSuffix(".app") && (app.hasPrefix("Kermo") || app.hasPrefix("DFileManager"))
     }
 }
