@@ -115,8 +115,8 @@ Trust in one paragraph: built-in tools are trusted. Any other runs **nothing** u
 ### The shell of the app
 
 - **`main.swift`** — two helper modes that exit at once (`--askpass`, `--mcp`), else the app.
-- **`AppDelegate.swift`** — the composition root. It builds the window, owns the panels, the operation queue, the registries and the saved state, and wires each part to the others with closures. Other files extend it: `extension AppDelegate` is how a feature gets at the app's state (`Commands.swift` is one such extension).
-- **`Commands.swift`** — the command registry and what each command does. **One command id serves every surface**: its menu item, its key, its button on the key bar, its line in the palette (⇧⌘P), its row in Settings › Keys and in F1. All of them call `perform(id)`, which is where "not available here" is decided once. A new action is a new `Command`, never a new menu target.
+- **`AppDelegate.swift`** — the composition root. It builds the window, owns the panels, the operation queue, the registries and the saved state, and wires each part to the others with closures. Other files extend it: `extension AppDelegate` is how a feature gets at the app's state (`Commands.swift` and its `Commands+*.swift` are such extensions).
+- **`Commands.swift`** — the command registry. **One command id serves every surface**: its menu item, its key, its button on the key bar, its line in the palette (⇧⌘P), its row in Settings › Keys and in F1. All of them call `perform(id)`, which is where "not available here" is decided once. A new action is a new `Command`, never a new menu target. What the commands do lives beside it, one file per area: `Commands+Servers.swift`, `Commands+Archives.swift`, `Commands+Undo.swift` and so on.
 - **`Config.swift`** — the config folder (`~/.config/dfilemanager/`). A file that can't be read at all is never saved over until it can be; one that reads but doesn't parse is first copied aside as `.broken`. Saving is serialised, atomic and owner-only. A file that bypasses `Config.loadKeeping` gets neither guarantee — new state files should load through it.
 - **`Session.swift`**, **`Settings*.swift`**, **`Shortcut.swift`**, **`Theme.swift`**, **`Updates.swift`** — saved tabs, the Settings window, key parsing, colours, the updater.
 
@@ -265,7 +265,7 @@ A change that breaks one of these is a bug even if every test passes.
 
 ## Where to start reading
 
-- **What a key or menu item does** — `Commands.swift`: find the id in `makeCommands()`
+- **What a key or menu item does** — `Commands.swift`: find the id in `makeCommands()`, then the action in `Commands+<area>.swift`
 - **How files are copied** — `FileJob.swift`, then `Transfer.swift` for servers
 - **Anything that talks to a server** — `SFTP.swift` (connection), `SFTPClient.swift` (files), `ServerGate.swift` (permission)
 - **A panel's behaviour** — `PanelViewController.swift`; rows that aren't files: `ListPanel.swift`
