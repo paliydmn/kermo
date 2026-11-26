@@ -254,6 +254,27 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(asked() == ["Let the assistant read there until the chat ends?"])
     }
 
+    /// A FIFO in a folder both panels show — this Mac's and a server's (this Mac's sftp-server) — with the cursor on it:
+    /// listing it, its status line and the cursor never open it (that would wait for a writer), so both go on to the
+    /// next folder. A guard: nothing does today.
+    @Test func aFifoInAShownFolderStallsNoPanel() async throws {
+        let (s, dir, _, _) = try aiSetUp()
+        defer { aiTearDown(s, dir) }
+        ServerLock.servers = { [] }
+        try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir + "/sub/x.txt", contents: Data("x".utf8))
+        #expect(mkfifo(dir + "/pipe", 0o600) == 0)
+        let local = s.app.panels[0], remote = s.app.panels[1]
+        local.navigate(to: dir, select: "pipe")
+        remote.loadRemote(.local(), dir: dir, select: "pipe")
+        await until { local.cursorURL?.lastPathComponent == "pipe" && remote.remote?.dir == dir && remote.listedItems.count == 2 }
+        #expect(local.statusText.contains("2 items") && remote.statusText.contains("2 items"), "\(local.statusText) · \(remote.statusText)")
+        remote.loadRemote(.local(), dir: dir + "/sub", select: nil)
+        local.navigate(to: dir + "/sub")
+        await until { remote.remote?.dir == dir + "/sub" && remote.listedItems.count == 1 && local.path == dir + "/sub" && local.listedItems.count == 1 }
+        #expect(remote.listedItems.map(\.name) == ["x.txt"] && local.listedItems.map(\.name) == ["x.txt"])
+    }
+
     /// list_folder and read_file on a server and on this Mac: asked once to read there, then free; secrets masked,
     /// a long file cut, what isn't a text file refused in words.
     @Test func theAssistantReadsFoldersAndFiles() async throws {

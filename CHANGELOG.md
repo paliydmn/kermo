@@ -20,6 +20,7 @@ Release:
 - A server row's buttons under the mouse are narrower, so its name keeps more of its start and a double-click on it opens the files. → [Servers](docs/servers.md)
 
 ### Fixed
+- A Tools list whose file on the server is a FIFO no longer hangs for good: it isn't opened, and the list says so.
 - The AI asks every time before a command that writes where it's told — `cp`, `tee`, `sed -i`, `tar` (listing aside), `rsync`, `ln`, `install`, `unzip`, `patch` — as it does for `rm` and `> file`. → [What asks every time](docs/ai.md#what-asks-every-time)
 - The AI can no longer read Kermo's local copy of a server's file as this Mac's, which got around **Never Send** for production servers. → [AI](docs/ai.md)
 - ⌘E ↩ and Execute in Terminal no longer run the command in the wrong folder: when the shell couldn't go to the panel's or the file's folder (gone, no access), nothing is typed after the `cd`. → [Command line](docs/commands.md#command-line)

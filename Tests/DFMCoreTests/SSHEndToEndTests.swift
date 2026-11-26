@@ -172,3 +172,14 @@ func withTestSSHD(config: String = "", _ body: (_ t: SFTPTarget, _ dir: String, 
     #expect(status != 0 && !String(decoding: out, as: UTF8.self).contains("ran"))
     #expect(try SSHCommand.capture(t, SSHCommand.inDir(d, "true; echo ran")) == "ran\n", "a folder that's there")
 }}
+
+/// A FIFO on the server is refused before it's opened: the open would wait for a writer inside sftp-server, and the
+/// whole connection with it — the next call there goes through at once.
+@Test(.timeLimit(.minutes(1))) func aServersFifoIsNeverOpened() throws { try withTestSSHD { t, d, _ in
+    #expect(mkfifo(d + "/pipe", 0o600) == 0)
+    FileManager.default.createFile(atPath: d + "/a.txt", contents: Data("a".utf8))
+    let (pipe, file) = try SFTP.session(t, env: [:], cancel: CancelFlag(), on: nil) { c in
+        (Result { try c.read(d + "/pipe", max: 10) }, try c.read(d + "/a.txt", max: 10))
+    }
+    #expect((try? pipe.get()) == nil && file == Data("a".utf8))
+}}
