@@ -170,7 +170,9 @@ extension AppDelegate {
     /// ⌘E and the user menu (F2). On a server panel the command runs on the server, in its folder.
     func runShell(_ command: String, in dest: ShellWhere) {
         let context = shellContext
-        guard let expanded = context.expand(command) else { return active.flash("%D: the other panel is on another machine") }
+        guard let expanded = context.expand(command) else {
+            return active.flash(other.list != nil ? "%D: the other panel shows a list, not a folder" : "%D: the other panel is on another machine")
+        }
         // A list of a server's: on that server, in its login folder (".": where its shell starts).
         if let target = context.server {
             let env = SSHAskpass.env, r = (target: target, dir: context.dir), panel = active

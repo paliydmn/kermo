@@ -109,20 +109,30 @@ extension AppDelegate {
         }
     }
 
-    /// Symlinks the bundled `fm` script into /usr/local/bin (asks for a password if that folder is root's).
+    /// Symlinks the bundled `kermo` script into /usr/local/bin (asks for a password if that folder is root's), and
+    /// takes away the `fm` link an older Kermo put there: it hid macOS's own /usr/bin/fm.
     func installCLI() {
-        guard let script = Bundle.main.path(forResource: "fm", ofType: nil) else {
-            return showError(JobErrorMessage("“fm” isn't in the app bundle — build the app with ./build.sh."))
+        guard let script = Bundle.main.path(forResource: "kermo", ofType: nil) else {
+            return showError(JobErrorMessage("“kermo” isn't in the app bundle — build the app with ./build.sh."))
         }
-        let link = "/usr/local/bin/fm"
+        let link = "/usr/local/bin/kermo", old = "/usr/local/bin/fm"
         var st = stat()
         if lstat(link, &st) == 0 && st.st_mode & S_IFMT != S_IFLNK {
             return showError(JobErrorMessage("\(link) already exists and isn't a link — not replacing it."))
         }
+        let oldIsOurs = (try? FileManager.default.destinationOfSymbolicLink(atPath: old)).map(Self.isOldFmLink) ?? false
         try? FileManager.default.removeItem(atPath: link)   // an older link (e.g. the app moved)
         if (try? FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: script)) != nil {
-            return active.flash("Installed \(link) — try “fm .” in a terminal")
+            if oldIsOurs { try? FileManager.default.removeItem(atPath: old) }
+            return active.flash("Installed \(link) — try “kermo .” in a terminal")
         }
-        Task { await runAdmin("Install fm", "mkdir -p /usr/local/bin && ln -sfn \(ShellContext.quote(script)) \(link)") }
+        Task { await runAdmin("Install kermo", "mkdir -p /usr/local/bin && ln -sfn \(ShellContext.quote(script)) \(link)" + (oldIsOurs ? " && rm -f \(old)" : "")) }
+    }
+
+    /// Where an `fm` link from before the rename points: into Kermo's (or DFileManager's, its first name) bundle.
+    nonisolated static func isOldFmLink(_ destination: String) -> Bool {
+        let parts = destination.split(separator: "/")
+        guard parts.suffix(3).elementsEqual(["Contents", "Resources", "fm"]), let app = parts.dropLast(3).last else { return false }
+        return app.hasSuffix(".app") && (app.hasPrefix("Kermo") || app.hasPrefix("DFileManager"))
     }
 }

@@ -4,7 +4,7 @@ import Testing
 @testable import DFileManager
 @testable import DFMCore
 
-// The editor from any app: the global shortcut, the Dock menu, kermo://, `fm --new`, life with no windows, and a
+// The editor from any app: the global shortcut, the Dock menu, kermo://, `kermo --new`, life with no windows, and a
 // question on the hidden main window. In the serialized suite: they share the editor window, the shortcut and the
 // activation seam with the editor's and the Monitor's tests.
 
@@ -365,10 +365,10 @@ extension EditorWindowTests {
     }
 }
 
-/// `fm --new` gives `open` the fixed URL and nothing else; the old forms are as they were; another `--` flag is a
+/// `kermo --new` gives `open` the fixed URL and nothing else; the old forms are as they were; another `--` flag is a
 /// usage line and code 2, nothing opened.
-@Test func fmNewOpensOnlyTheFixedURL() throws {
-    let fm = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("bin/fm").path
+@Test func kermoNewOpensOnlyTheFixedURL() throws {
+    let fm = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("bin/kermo").path
     let stub = try scratch()
     defer { try? FileManager.default.removeItem(atPath: stub) }
     try Data("#!/bin/sh\necho \"$@\"\n".utf8).write(to: URL(fileURLWithPath: stub + "/open"))
@@ -390,4 +390,15 @@ extension EditorWindowTests {
     #expect(try run(["--show"]) == ("", 2))
     #expect(try run(["-n"]) == ("", 2), "none of open's options: -n would start a second Kermo")
     #expect(try run(["/a", "--new"]) == ("", 2))
+}
+
+/// Install “kermo” Command takes away an `fm` link only when it's Kermo's own from before the rename (it hid macOS's
+/// /usr/bin/fm) — never another program's.
+@Test func onlyKermosOldFmLinkIsTakenAway() {
+    #expect(AppDelegate.isOldFmLink("/Applications/Kermo.app/Contents/Resources/fm"))
+    #expect(AppDelegate.isOldFmLink("/Applications/DFileManager.app/Contents/Resources/fm"), "the app's first name: the link points at nothing now")
+    #expect(!AppDelegate.isOldFmLink("/usr/bin/fm") && !AppDelegate.isOldFmLink("/Applications/Other.app/Contents/Resources/fm"))
+    #expect(!AppDelegate.isOldFmLink("/Applications/Kermo.app/Contents/Resources/kermo"))
+    #expect(!AppDelegate.isOldFmLink("/Users/me/Kermo-old/Other.app/Contents/Resources/fm"), "the bundle's own name, not a folder above it")
+    #expect(AppDelegate.isOldFmLink("/Users/me/Apps/Kermo 2.app/Contents/Resources/fm"))
 }

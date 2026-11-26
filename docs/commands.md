@@ -1,6 +1,6 @@
 [Kermo documentation](../README.md#documentation)
 
-# Commands, user menu and `fm`
+# Commands, user menu and `kermo`
 
 Run a shell command on the files in front of you, keep your own commands in a menu, and open Kermo from the shell.
 
@@ -17,7 +17,7 @@ On a server the command runs in the panel's folder. If that folder is gone (remo
 
 An output window's title is the command, with the folder (or server and folder) under it; its status line says `running…`, then the exit status and time, and its key bar says what ⎋ does now: **⎋ Stop**, then **⎋ Close**. In an output window ⎋ stops the command and keeps what it printed; ⎋ again, or once it's over, closes the window. **⌘C** with nothing selected copies all it printed; **⌘S** saves it as a text file. Closing it or quitting Kermo stops the command too. Terminal colors in the output show as colors; errors stay red.
 
-On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and functions, colors, `sudo` and `git commit` prompts, Tab completion and ⌃R all work, and the command lands in the shell's history. On a root panel the command still runs as the user ([root panel](root-panel.md#what-runs-as-root)).
+On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and functions, colors, `sudo` and `git commit` prompts, Tab completion and ⌃R all work, and the command lands in the shell's history. When the shell is in another folder, Kermo types a `cd` first and the command only once the shell is there: a folder that's gone or can't be entered gets no command at all, so nothing runs where the shell happened to be. On a root panel the command still runs as the user ([root panel](root-panel.md#what-runs-as-root)).
 
 ## Run on several servers
 
@@ -52,7 +52,7 @@ In the command line and in the user menu:
 | `%D` | The folder in the other panel |
 | `%%` | A literal `%` (for example `find -printf '%%f'`) |
 
-Every substituted value is escaped for the shell; a name starting with `-` or `@` gets `./` in front, so `rm %s` or `tar -cf x.tar %s` doesn't read it as an option or an archive to include. A command with `%D` doesn't run when the other panel is on another machine (a local panel next to a server panel, or two different servers).
+Every substituted value is escaped for the shell; a name starting with `-` or `@` gets `./` in front, so `rm %s` or `tar -cf x.tar %s` doesn't read it as an option or an archive to include. A command with `%D` doesn't run when the other panel is on another machine (a local panel next to a server panel, or two different servers), or shows a list (Services, Containers, a server's overview) rather than a folder: the status line says why.
 
 ## User menu
 
@@ -73,17 +73,19 @@ Every substituted value is escaped for the shell; a name starting with `-` or `@
 
 The four server entries (service status, restart, failed services, and the log of the unit under the cursor) are in the file Kermo writes. If your `usermenu.json` is older and lacks them, Kermo adds them after your entries on a server panel, marked "built in". On a production server, `systemctl stop` and `restart` ask first (see [safety](safety.md) for all that asks).
 
-## The `fm` command
+## The `kermo` command
 
-Choose **Kermo ▸ Install “fm” Command** to create a link in `/usr/local/bin`. Then:
+Choose **Kermo ▸ Install “kermo” Command** to create a link in `/usr/local/bin`. Then:
 
 | Type | Result |
 |---|---|
-| `fm` | Opens the current directory |
-| `fm ~/a ~/b` | Opens both directories in two panels |
-| `fm /etc/hosts` | Reveals the file in its directory |
-| `fm --new` | A new editor document ([from any app](viewer-editor.md#from-any-app)) |
+| `kermo` | Opens the current directory |
+| `kermo ~/a ~/b` | Opens both directories in two panels |
+| `kermo /etc/hosts` | Reveals the file in its directory |
+| `kermo --new` | A new editor document ([from any app](viewer-editor.md#from-any-app)) |
 
 Any other argument starting with `-` prints the usage line and does nothing.
+
+The command used to be `fm`. macOS 27 has its own `/usr/bin/fm`, which the old link in `/usr/local/bin` hid: installing `kermo` removes an `fm` link that points into Kermo (or DFileManager, its first name), and leaves any other `fm` alone.
 
 Kermo also appears in Finder's **Open With** menu for folders.

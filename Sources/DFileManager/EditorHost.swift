@@ -831,14 +831,14 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
             case nil: false
             }
         }.map(\.id)
-        for (i, item) in bar.items.enumerated().reversed() where EditorTool.named(item.itemIdentifier)?.when != nil && !want.contains(item.itemIdentifier) {
+        // Each index read just before its call: toolbars sharing an identifier ("Editor") sync items, so the count can
+        // change between calls — an index worked out once ran past the end (D-217).
+        for _ in bar.items.indices {   // bounded: never a loop on the main thread if a removal doesn't take
+            guard let i = bar.items.firstIndex(where: { EditorTool.named($0.itemIdentifier)?.when != nil && !want.contains($0.itemIdentifier) }) else { break }
             bar.removeItem(at: i)
         }
-        let have = Set(bar.items.map(\.itemIdentifier))
-        var at = bar.items.firstIndex { $0.itemIdentifier == EditorTool.moreID } ?? bar.items.count
-        for id in want where !have.contains(id) {
-            bar.insertItem(withItemIdentifier: id, at: at)
-            at += 1
+        for id in want where !bar.items.contains(where: { $0.itemIdentifier == id }) {
+            bar.insertItem(withItemIdentifier: id, at: bar.items.firstIndex { $0.itemIdentifier == EditorTool.moreID } ?? bar.items.count)
         }
     }
 

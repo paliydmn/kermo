@@ -322,14 +322,16 @@ private final class SidebarOutline: NSOutlineView {
 class PillButton: NSButton {
     private var over = false { didSet { if over != oldValue { needsDisplay = true } } }
     var minSide: CGFloat = 22 { didSet { invalidateIntrinsicContentSize() } }
+    /// 2 pt of fill each side and 18 pt wide at least (a server row's actions under the mouse: its name keeps more).
+    var narrow = false { didSet { invalidateIntrinsicContentSize() } }
     override init(frame: NSRect) {
         super.init(frame: frame)
         setContentCompressionResistancePriority(.defaultLow, for: .vertical)   // a shorter row (small sidebar icons): a shorter target
     }
     required init?(coder: NSCoder) { super.init(coder: coder) }
-    override var intrinsicContentSize: NSSize {   // 4 pt of fill each side of the title
+    override var intrinsicContentSize: NSSize {   // 4 pt of fill each side of the title (`narrow`: 2)
         let s = super.intrinsicContentSize
-        return NSSize(width: max(s.width + 8, minSide), height: max(s.height, minSide))
+        return NSSize(width: max(s.width + (narrow ? 4 : 8), narrow ? 18 : minSide), height: max(s.height, minSide))
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -859,7 +861,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
              ? [pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
           + [more])
         chips.spacing = 4
-        toolbar.spacing = 2
+        toolbar.spacing = 0   // narrow, at the row's end: the name keeps its start, and a double-click on it opens the files
+        for case let b as PillButton in toolbar.arrangedSubviews { b.narrow = true }
         toolbar.isHidden = true
 
         let r = row([icon, name, prod ? ChipView(.prod) : nil, chips, toolbar].compactMap { $0 })

@@ -58,3 +58,14 @@ import Testing
     }
     #expect(search("", recent: ["remote.open", "file.copy"])[0].hits.map(\.target) == [.command("file.copy")], "nor in Recent")
 }
+
+/// A server's name typed from its start goes first and is chosen — not a command found by a subsequence of an alias —
+/// unless a command's own name starts so too.
+@Test @MainActor func aServersNameTypedGoesFirst() {
+    let servers = ["vault", "web-01", "copper"].map { SearchHit(title: $0, detail: "server", target: .server($0)) }
+    let find = { (q: String) in HeaderSearchModel.results(q, commands: AppDelegate().makeCommands(), folders: [], servers: servers, files: [], recent: []) }
+    #expect(find("vault").first?.hits.first?.target == .server("vault"))
+    #expect(find("web").first?.hits.first?.target == .server("web-01"))
+    #expect(find("co").first?.group == "Commands", "Copy… starts so: commands first")
+    #expect(find("ault").first?.group != "Servers", "a subsequence isn't the name typed")
+}

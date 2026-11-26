@@ -91,7 +91,14 @@ enum HeaderSearchModel {
             ("Folders", ranked(folders) { Fuzzy.score(q, $0.title).map { $0 + 50 } ?? Fuzzy.score(q, $0.subtitle) }),
             ("In This Panel", ranked(files) { Fuzzy.score(q, $0) }.map { SearchHit(title: $0, target: .file($0)) }),
         ]
-        let found = groups.filter { !$0.1.isEmpty }
+        var found = groups.filter { !$0.1.isEmpty }
+        // A server's name typed from its start goes first (and is chosen): `vault` is the server, not File History…
+        // found by a subsequence of an alias. Not over a command whose own name starts so too: `co` stays Copy.
+        let starts = { (s: String?) in s?.lowercased().hasPrefix(q.lowercased()) == true }
+        if let i = found.firstIndex(where: { $0.0 == "Servers" }), starts(found[i].1.first?.title),
+           !(found.first { $0.0 == "Commands" }?.1.first.map { starts($0.title) } ?? false) {
+            found.insert(found.remove(at: i), at: 0)
+        }
         var last = disk(q)
         if found.isEmpty { last.subtitle = "Nothing matches “\(q)”" }
         return found + [("", [last])]

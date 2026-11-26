@@ -131,7 +131,7 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"])
     let plain = NSButton(image: try #require(buttons[1].image), target: nil, action: nil)
     plain.isBordered = false
-    #expect(buttons[1].intrinsicContentSize.width == max(plain.intrinsicContentSize.width + 8, 22), "a few pt wider, no bezel")
+    #expect(buttons[1].intrinsicContentSize.width == max(plain.intrinsicContentSize.width + 4, 18), "a few pt wider, no bezel; narrow (D-148)")
 }
 
 // MARK: - I10: systemctl in the F2 menu, on a server panel only

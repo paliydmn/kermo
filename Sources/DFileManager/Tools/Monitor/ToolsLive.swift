@@ -228,6 +228,8 @@ import DFMCore
         } else if let s, let down = s.down {
             ("Not answering since \(down.formatted(date: .omitted, time: .shortened)) · \(s.missed) checks in a row · last data "
              + (s.lastLine?.formatted(date: .omitted, time: .standard) ?? "—") + ". This Mac is online.", Palette.fail)
+        } else if let s, s.channel == nil, s.error == ToolMonitor.notConnected {
+            (s.connecting ? "Connecting to \(server.title)…" : "\(server.title) isn't connected.", NSColor.secondaryLabelColor)
         } else if let s, s.channel == nil, s.retryAt != nil {
             ("Connecting…" + (s.error.map { " (\($0))" } ?? ""), NSColor.secondaryLabelColor)
         } else if let s, s.channel != nil, s.missed > 0 {
@@ -246,7 +248,7 @@ import DFMCore
         banner.stringValue = text
         banner.textColor = color
         banner.isHidden = text.isEmpty
-        connectButton.isHidden = s?.needsLogin != true || s?.connecting == true
+        connectButton.isHidden = !(s?.needsLogin == true || s?.channel == nil && s?.error == ToolMonitor.notConnected) || s?.connecting == true
         endButton.isHidden = s?.inMaintenance != true || !text.hasPrefix("Maintenance")
         let record = t?.history.last?.record ?? [:], alerts = alerts
         let scope = ToolTemplate.Scope(rows: [record])
