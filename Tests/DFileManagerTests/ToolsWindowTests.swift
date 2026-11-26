@@ -39,10 +39,10 @@ extension ServerLockTests {
         #expect(w.rows.first == .header("SERVERS") && w.rows.contains(.library(mine: true)))
         #expect(page.body.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }.first == "localhost isn't connected.")
         #expect(buttons(page.body).map(\.title) == ["Connect"] && bench.trips == 0, "nothing logs in to draw a page")
-        w.window.setContentSize(NSSize(width: 900, height: 800))
+        w.window.setContentSize(NSSize(width: 900, height: 600))   // fits CI's small screen
         w.window.contentView?.layoutSubtreeIfNeeded()
         let said = try #require(page.body.arrangedSubviews.first), plus = page.add
-        #expect(page.bounds.height > 700 && page.convert(said.bounds, from: said).maxY > page.bounds.height - 140
+        #expect(page.bounds.height > 500 && page.convert(said.bounds, from: said).maxY > page.bounds.height - 140
                 && page.convert(plus.bounds, from: plus).maxY > page.bounds.height - 110, "from the top left, not spread down the page")
         // The sidebar keeps its width as the window widens; a narrow window narrows it before the page.
         let side = try #require(w.sidebar.enclosingScrollView), wide = side.frame.width
@@ -91,10 +91,10 @@ extension ServerLockTests {
         AppDelegate.connected = { _ in false }
         let main = ToolsWindow.show(app, server: .local())
         main.page?.select("ufw")
-        main.window.setFrame(NSRect(x: 120, y: 140, width: 960, height: 600), display: false)
+        main.window.setFrame(NSRect(x: 120, y: 40, width: 960, height: 600), display: false)   // inside a 1024×768 screen
         let own = ToolsWindow.showAlone(app, here, here.target)
         own.page?.select("sites")
-        own.window.setFrame(NSRect(x: 200, y: 180, width: 720, height: 500), display: false)
+        own.window.setFrame(NSRect(x: 200, y: 80, width: 720, height: 500), display: false)
         ToolsWindow.showAlone(app, gone, gone.target)
         var saved = ToolsWindow.saved(app)
         #expect(saved.map(\.server) == [here.id.uuidString, here.id.uuidString, gone.id.uuidString] && saved.map(\.tab) == ["ufw", nil, nil]

@@ -28,8 +28,8 @@ private func reopen(_ s: DraftStore) async throws -> (store: DraftStore, session
     return try openAgain(s.dir)
 }
 
-/// Opened again right after a `release`: `.locked` for a moment is another test's fork holding a copy of the lock's
-/// descriptor until its exec (CI and loaded runs saw it); for good, it's a failure.
+/// Opened again right after a `release`: CI and loaded runs saw `.locked` for a moment (not traced — in a full app run
+/// a terminal's forkpty can hold a copy of the lock's descriptor until its exec); for good, it's a failure.
 private func openAgain(_ dir: String) throws -> (store: DraftStore, session: EditorSession, damaged: String?) {
     for _ in 0..<50 {
         do { return try DraftStore.open(dir) } catch DraftStore.Failure.locked { usleep(20_000) }
@@ -211,7 +211,7 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
     #expect(try Data(contentsOf: URL(fileURLWithPath: dir + "/session.json")) == newer)
     #expect(!FileManager.default.fileExists(atPath: dir + "/damaged"))
     unlink(dir + "/session.json")
-    _ = try DraftStore.open(dir).store   // the refused open let go of the lock
+    _ = try openAgain(dir).store   // the refused open let go of the lock
 }
 
 /// A revision that isn't what the manifest says is no text: it goes to damaged/, a missing one says so.
