@@ -106,7 +106,7 @@ Trust in one paragraph: built-in tools are trusted. Any other runs **nothing** u
 
 - **`AIProvider`, `AIAnthropic`, `AIOpenAI`** — The provider protocol (a stream of events), two wire formats, the key store (Keychain, one key per address, never sent over plain HTTP to a public host).
 - **`AIChat`** — The turn loop: send, take the model's tool calls, run each through a closure the app supplies, send the results. Capped by rounds and by cost.
-- **`AITool`, `AIScope`, `AICommand`** — The 14 tools, what each may touch, and the rules: `AIScope.check` answers *allowed*, *ask* or *outside*; `AICommand.isReadOnly` is an allow-list that decides whether a shell line only reads.
+- **`AITool`, `AIScope`, `AICommand`** — The 14 tools, what each may touch, and the rules: `AIScope.check` answers *allowed*, *ask* or *outside*; `AICommand.isReadOnly` is an allow-list that decides whether a shell line only reads; `AICommand.overwrites` names the commands that ask every time (`rm`, `> file`, `cp`, `sed -i`…, each command by its own program).
 - **`AISecrets`, `AIEdit`, `AIContext`** — Masking of secrets before text leaves the Mac, exact-once edits, the snapshot of what the user is looking at.
 - **`MCP`** — The same tools for an outside agent: JSON-RPC over a unix socket, owner-only.
 
@@ -199,7 +199,7 @@ sequenceDiagram
     M->>L: tool_use write_file
     L->>S: call
     S->>S: resolve server, AITool.targets
-    S->>S: mode read-only? Never Send?
+    S->>S: Kermo's temp copy? mode read-only? Never Send?
     S->>S: AIScope.check → outside → "Allow for This Task"
     S->>G: unlock (Touch ID), look at what is there
     G->>S: production / overwrite → "Allow Once"
@@ -232,7 +232,7 @@ Text that crosses one of these lines is data. The code that handles each line is
 - **A file name, on this Mac or a server** — `ShellContext.quote` (one word to any shell, fish too); `isTypeable` before anything is typed into a terminal; `FileJob.isSafeName` for names a server returns.
 - **A server's output** — Parsers in `ToolRecords`; never interpolated into a command. In a terminal: `TerminalGate`.
 - **A tool from outside** — `ToolTrust` (hash of what was approved), `ToolCatalog` (signature before parsing).
-- **The model, and whatever it read** — `AISession.pass` → `AIScope.check` → `AppDelegate.gate`; `AICommand.isReadOnly`; `AISecrets.mask` on the way out.
+- **The model, and whatever it read** — `AISession.pass` → `AIScope.check` → `AppDelegate.gate`; `AICommand.isReadOnly`; `AISecrets.mask` on the way out. Kermo's temp copies of server files (`TempCopies.within`) are never this Mac's to the model.
 - **An update** — `Updates.isSigned`: the new app must satisfy the running app's own code-signing requirement, checked again on the copy that is installed.
 - **Another process on this Mac** — Unix sockets check the peer's user and that it descends from this app.
 
