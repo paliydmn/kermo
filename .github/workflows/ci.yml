@@ -42,7 +42,19 @@ jobs:
           kill $w 2>/dev/null || true
           exit $s
       # The app's tests want a window server, the Keychain and an idle machine: their result is shown, not required.
+      # In a session of their own: a signal to the tests' process group can't reach the runner (runs ended mid-way, exit 0,
+      # no summary). A run with no summary fails and names the tests that started and never ended.
       - name: App tests
         continue-on-error: true
         timeout-minutes: 25
-        run: ./test.sh --filter DFileManagerTests
+        shell: bash
+        run: |
+          s=0; perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!"; exec @ARGV' ./test.sh --filter DFileManagerTests 2>&1 | tee "$RUNNER_TEMP/app.log" || s=$?
+          if ! grep -q 'Test run with' "$RUNNER_TEMP/app.log"; then
+            echo "::error::App tests ended with no summary (exit $s). Started and not ended:"
+            LC_ALL=C sed -nE 's/.*Test ([A-Za-z0-9_]+)\([^)]*\) started\..*/\1/p' "$RUNNER_TEMP/app.log" | sort -u > "$RUNNER_TEMP/started"
+            LC_ALL=C sed -nE 's/.*Test ([A-Za-z0-9_]+)\([^)]*\)( with [0-9]+ test cases?)? (passed|failed|skipped).*/\1/p' "$RUNNER_TEMP/app.log" | sort -u > "$RUNNER_TEMP/ended"
+            comm -23 "$RUNNER_TEMP/started" "$RUNNER_TEMP/ended"
+            exit 1
+          fi
+          exit $s
