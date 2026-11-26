@@ -140,6 +140,10 @@ final class AISession {
         guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: ["tools", "server_info"].contains(tool.name) } }() }) else {
             return ("refused: no commands on this Mac", .failure("Commands, Tools and server_info run on servers only, not on this Mac. Nothing was done."))
         }
+        // Kermo's own copies on this Mac — a server's file, an archive's — aren't this Mac's files to the assistant.
+        guard !targets.contains(where: { $0.place == .mac && $0.path.map(TempCopies.within) == true }) else {
+            return ("refused: Kermo's copy", .failure("That is inside Kermo's own temporary copies (of server files, archives…), not the assistant's to use. Read the file where it is — on its server. Nothing was done."))
+        }
         // Before the scope: what an Agent turn was allowed doesn't carry into Ask.
         if readOnly, targets.contains(where: AIScope.changes) {
             return ("refused: Ask", .failure("In Ask the assistant only reads: this would change something. Nothing was done — give the user the commands instead."))

@@ -78,7 +78,7 @@ In **Edit** the model reads the file, then shows its change in the chat as a car
 - **Apply to Editor** puts the changes you keep into the file's tab in Kermo's editor, opening the file if it isn't open (a locked server asks for Touch ID first), with the cursor on the first one. It's one step: **⌘Z** takes all of it back. Nothing is written — the file on the disk or the server is as it was until you press **⌘S**, which saves as always: a config's check, the file's history, the production question.
 - A file open in the editor with unsaved changes gets the change on its text there. If the text changes after the card came — you typed, or applied another — **Apply** refuses: ask again.
 - **Open in Compare** shows the proposal, read-only, beside the file in the editor's [Compare](viewer-editor.md#compare): **Copy Change** takes the parts you want, one ⌘Z each. A change of more than 200 lines has only this.
-- A value Kermo hid as `•••` can't be changed or written back, and neither can the name in front of it: the model has to edit around it, and the card shows such values as `•••` too. What the model writes itself it shows as written. A file open as root in the editor isn't the chat's: it reads and changes the file as your user. Under **Never Send** a production server's file isn't read, so it isn't changed either.
+- A value Kermo hid as `•••` can't be changed or written back, and neither can the name in front of it: the model has to edit around it, and the card shows such values as `•••` too. What the model writes itself it shows as written. Kermo's own local copies of server files (what ↩, F3 and F4 open from a server) aren't this Mac's files to the model: it reads such a file on its server, so Never Send still holds. A file open as root in the editor isn't the chat's: it reads and changes the file as your user. Under **Never Send** a production server's file isn't read, so it isn't changed either.
 
 A card does nothing until you press one of its buttons; **New Chat** clears it.
 
@@ -117,7 +117,7 @@ A chat opened again shows its questions, what was attached (by name) and the ans
 
 Whatever you allowed — the chat's Agent and an [agent in Kermo's terminal](#agents-in-kermos-terminal) alike —, these ask each time, with **Allow Once** (↩ = **Cancel**):
 
-- a command Kermo recognises as deleting, moving or writing over — not every one, see the warning below (`rm`, `mv`, `dd`, `truncate`, `find … -delete`, `rsync --delete`, `git clean`, `git reset --hard`, `> file`…), and writing or copying over a file that is there;
+- a command Kermo recognises as deleting, moving or writing over — not every one, see the warning below (`rm`, `mv`, `dd`, `truncate`, `find … -delete`, `git clean`, `git reset --hard`, `> file`, `cp`, `tee`, `sed -i`, `tar` but `tar -t`, `rsync`, `ln`, `install`, `unzip`…), and writing or copying over a file that is there;
 - a `copy` from one machine to another — this Mac to a server, a server to this Mac or to another server — whatever each was allowed: the question names the file and both machines. **Allow Once** is for that copy only, the next one asks again. A copy within one machine asks only to write over a file. This is about the `copy` tool: the model can still read a file on one machine and write its text with `write_file` on another, which asks only as writing there does (after a read on a server, with ⚠ — see [Text from a server](#text-from-a-server)), and a command it may run can copy too;
 - a Tools action that always asks from its button (Delete Rule…, Stop…), with the command as it will run and the row;
 - any change on a [production server](#production-servers).
@@ -125,7 +125,7 @@ Whatever you allowed — the chat's Agent and an [agent in Kermo's terminal](#ag
 The question shows the command whole, as it will run — a long one scrolls; another long value is cut, saying how much more there is. A [locked server](servers.md#lock-a-server) wants Touch ID first, as for you. On a production server the commands, saves, copies and Tools actions go to the [production log](safety.md#production-log), marked as the assistant's (`"by": "ai"`).
 
 > [!WARNING]
-> Once the model or an agent may **run commands** on a server, a command can still change files there without another question: Kermo recognises the obvious ones above, not every way a shell can write (`cp`, `sed -i`, `tee`, `tar -cf` don't ask). Allow commands only where that is acceptable, and prefer `copy` and `write_file`, which ask before writing over a file.
+> Once the model or an agent may **run commands** on a server, a command can still change files there without another question: Kermo recognises the ones above, not every way a shell can write (a script, `sh -c "$x"`, a program it doesn't know don't ask). Allow commands only where that is acceptable, and prefer `copy` and `write_file`, which ask before writing over a file.
 
 ### Text from a server
 
