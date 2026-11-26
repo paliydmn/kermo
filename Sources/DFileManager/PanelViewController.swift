@@ -32,6 +32,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             pathBar.showPlace(.server, SavedServer.name(for: t.asUser), chips: headerChips, scp: Self.scpPath(t, dir))
         case .folder: pathBar.showPlace(.mac, "Mac", chips: [], scp: nil)
         }
+        pathBar.refreshShown = showing.isFolderListing || list != nil   // results and archives: ⌘R leaves them as they are
         pathBar.style(text: isActive ? theme.text : theme.hidden, dim: theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
         targetMark.isHidden = !isTarget || list != nil   // a list takes no F5
@@ -511,6 +512,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         pathBar.onCrumb = { [unowned self] in goTo($0, otherPanel: $1.contains(.option)) }
         pathBar.onCopy = { [unowned self] in copyPath(scp: $0) }
         pathBar.onFilter = { [unowned self] in beginFilter() }
+        pathBar.onRefresh = { [unowned self] in   // as ⌘R, on this panel: it becomes the active one first
+            view.window?.makeFirstResponder(table)
+            onCommand?("view.refresh")
+        }
         pathBar.onPlace = { [unowned self] in   // the server's chip: its place
             guard let t = server, !isPlace, parked == nil else { return }
             view.window?.makeFirstResponder(table)   // the keys come here, as a click in the list

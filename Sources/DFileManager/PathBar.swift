@@ -3,7 +3,7 @@ import DFMCore
 
 /// A panel's path bar (R-22, §11 decisions 3 and 3a): a chip for the place — `Mac`, a server by its name with its
 /// PROD / ROOT / LOCKED chips, an archive, search results — then the path as crumbs; on the right a kept filter,
-/// "→ F5" and Copy. In a narrow panel the middle crumbs give way to "…", never the first. A click on a crumb goes
+/// "→ F5", Refresh and Copy. In a narrow panel the middle crumbs give way to "…", never the first. A click on a crumb goes
 /// there (⌥: in the other panel), a file dropped on one is copied there; a click on an empty spot turns the bar into a
 /// field with the plain path, as ⌘L does. The 2 pt line under it is the active panel's (`LinedStack`).
 @MainActor
@@ -22,6 +22,7 @@ final class PathBar: LinedStack {
     private let crumbRow = CrumbRow()
     private let filterChip = NSButton(title: "", target: nil, action: nil)
     let targetMark = NSImageView()
+    private let refreshButton = NSButton(title: "", target: nil, action: nil)
     private let copyButton = NSButton(title: "", target: nil, action: nil)
     private var copiedAt = 0
 
@@ -30,6 +31,8 @@ final class PathBar: LinedStack {
     /// The path to copy: plain, or (⌥) `user@host:path` on a server.
     var onCopy: ((_ scp: Bool) -> Void)?
     var onFilter: (() -> Void)?
+    /// Refresh (⌘R): the panel read again.
+    var onRefresh: (() -> Void)?
     /// A click on the place's chip (a server's name): its place.
     var onPlace: (() -> Void)?
     /// A drop on a crumb: what it would do there, and doing it.
@@ -69,13 +72,21 @@ final class PathBar: LinedStack {
         filterChip.isHidden = true
         targetMark.toolTip = "F5 / F6 copy and move here"
         targetMark.setContentCompressionResistancePriority(.required, for: .horizontal)
+        refreshButton.isBordered = false
+        refreshButton.image = Symbol.refresh.image("Refresh", color: .secondaryLabelColor, size: 11)
+        refreshButton.toolTip = "Refresh — ⌘R"
+        refreshButton.setAccessibilityLabel("Refresh")
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshClicked)
+        refreshButton.refusesFirstResponder = true
+        refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         copyButton.isBordered = false
         copyButton.imagePosition = .imageLeading
         copyButton.target = self
         copyButton.action = #selector(copyClicked)
         copyButton.refusesFirstResponder = true
         copyButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for v in [placeIcon, placeName, placeChips, crumbRow, field, filterChip, targetMark, copyButton] as [NSView] { addArrangedSubview(v) }
+        for v in [placeIcon, placeName, placeChips, crumbRow, field, filterChip, targetMark, refreshButton, copyButton] as [NSView] { addArrangedSubview(v) }
         setCustomSpacing(8, after: placeChips)
         showCopy(done: false)
     }
@@ -145,6 +156,13 @@ final class PathBar: LinedStack {
     }
 
     @objc private func filterClicked() { onFilter?() }
+    @objc private func refreshClicked() { onRefresh?() }
+
+    /// Refresh shows where there's something to read again: a folder, a server's folder, a list.
+    var refreshShown: Bool {
+        get { !refreshButton.isHidden }
+        set { refreshButton.isHidden = !newValue }
+    }
 
     @objc private func copyClicked() {
         onCopy?(NSApp.currentEvent?.modifierFlags.contains(.option) == true)

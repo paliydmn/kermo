@@ -25,6 +25,7 @@ Under the tabs, the path bar says where the panel is. First a chip for the place
 - In a narrow panel the middle crumbs give way to **…**; the first never does, and the folder you're in shows last.
 - **Click an empty spot** of the bar (or press ⌘L) to type a path: the bar becomes a field with the plain path, all of it selected. ↩ goes there, ⇥ completes a folder's name (on a server, the server's), ⎋ or a click elsewhere brings the crumbs back. While you type, the key bar shows **↩ Go**, **⇥ Complete**, **⎋ Back to Panel**.
 - **Copy** at the end copies the folder's full path: `/Users/me/Projects/site` here (not `~`), `/var/www/site` on a server. **⌥-click** on a server copies `deploy@web-01:/var/www/site`, for scp and rsync. It shows ✓ **Copied** for a second.
+- **Refresh** (↻, before Copy) reads the folder or list again, as ⌘R does — for changes Kermo didn't see come, such as a file rewritten in place or a server folder changed by someone else. A click on it in another panel makes that panel the active one.
 - A quick filter you kept with ↩ shows as a chip at the right end (click it to change the filter); with three or four panels, **→ F5** marks where F5 and F6 go.
 
 ### After a restart

@@ -257,6 +257,7 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     defer { pb.releaseGlobally() }
     panel.copyPath(scp: false, to: pb)
     #expect(pb.string(forType: .string) == dir + "/a/b", "the full path, not ~")
+    #expect(panel.pathBar.refreshShown, "a folder: Refresh next to Copy")
     panel.pathBar.copied()
     #expect(panel.pathBar.showsCopied)
     await until { !panel.pathBar.showsCopied }
