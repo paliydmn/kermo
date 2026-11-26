@@ -194,7 +194,6 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// The key, the model, the chips Kermo suggests — as things are now. No Keychain read: `has` only.
     func refresh() {
         guard built else { return }
-        session?.noProduction = AISettings.neverProd(app.defaults)   // back from Settings: the next read already knows
         let d = app.defaults, hasKey = AISettings.ready(d)
         model.title = d.string(forKey: "aiModel").flatMap { $0.isEmpty ? nil : $0 } ?? (AISettings.kind(d) == .anthropic ? AISettings.anthropicModel : "Choose a model")
         composer.isHidden = !hasKey
@@ -221,7 +220,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let does = switch mode {
         case .ask: "The model only reads: it changes nothing."
         case .edit: "The model reads, and proposes changes to files as a diff you keep or drop: only your ⌘S saves."
-        case .agent: "The model acts within what you allow this chat — the Scope row. Deleting, writing over a file and any change on production ask each time."
+        case .agent: "The model acts within what you allow this chat — the Scope row. Deleting, writing over a file, a copy between machines and any change on production ask each time."
         }
         let text = Self.wrapped(setup
             ? "Kermo sends your questions straight from this Mac to the provider you choose, with your key: Anthropic, or an OpenAI-compatible server — Ollama or LM Studio on your Mac too. No Kermo server, no Kermo account."
@@ -643,7 +642,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     @discardableResult private func madeSession() -> AISession {
         if let session { return session }
         let s = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
-        (s.readOnly, s.noProduction) = (mode != .agent, AISettings.neverProd(app.defaults))
+        s.readOnly = mode != .agent
         s.proposes = { [weak self] p, t, path in
             guard let self else { return }
             let card = EditCard(p, on: t, path: path, app: app)
@@ -796,7 +795,6 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// One turn, as it comes; again for Retry. `g`: the chat it belongs to.
     private func run(_ e: AIEndpoint, _ g: Int) async {
         guard let chat, let session else { return }
-        session.noProduction = AISettings.neverProd(app.defaults)
         // The chat's mode as it was built at ↩ — a Retry's too — not the segment's now.
         session.readOnly = chat.system != AIChat.agentSystem
         let answer = Answer(model: e.model, panel: self, mode: chat.system == AIChat.editSystem ? "Edit" : chat.system == AIChat.agentSystem ? "Agent" : nil)

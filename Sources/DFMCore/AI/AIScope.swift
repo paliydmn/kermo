@@ -87,7 +87,9 @@ public struct AIScope: Sendable, Equatable {
     public enum Reason: Int, Sendable {
         case unclear      // the call doesn't fit its tool: asked rather than guessed
         case production   // any change on a production server
-        case removes, overwrites
+        case removes
+        case betweenMachines   // a copy from one machine to another: what leaves a machine is the user's to say, each time
+        case overwrites
         case always       // a Tools action that asks every time, as its button does
     }
 
@@ -150,8 +152,9 @@ public struct AIScope: Sendable, Equatable {
     /// - write, remove: All, or Work with a folder that holds the path (`/srv/app` doesn't hold `/srv/app2`);
     /// - any other command, and a Tools action that changes something: All, or Work with commands;
     /// - asked always, in scope or not: a removal, writing over what exists, a command that `AICommand.overwrites`,
-    ///   a Tools action that asks every time, any change on production; and a call that doesn't fit its tool (no targets for a tool that has them,
-    ///   a change from a `read` or `ui` tool).
+    ///   a Tools action that asks every time, any change on production, a change whose call touches two places (a copy
+    ///   between this Mac and a server, or two servers — whatever each was allowed); and a call that doesn't fit its
+    ///   tool (no targets for a tool that has them, a change from a `read` or `ui` tool).
     ///
     /// Pure, so `prod` is the caller's knowledge at that moment: an alias not looked up yet isn't known as
     /// production. The runner checks again inside the gate's question, when it is.
@@ -177,6 +180,7 @@ public struct AIScope: Sendable, Equatable {
             if changes, prod(t.place) { reasons.insert(.production) }
             if changes, call.tool.kind == .read || call.tool.kind == .ui { reasons.insert(.unclear) }
         }
+        if call.targets.contains(where: Self.changes), Set(call.targets.map(\.place)).count > 1 { reasons.insert(.betweenMachines) }
         if !needs.isEmpty { return .outside(needs.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }) }
         if call.targets.count != call.tool.places.count { return .ask(.unclear) }
         return reasons.min { $0.rawValue < $1.rawValue }.map { .ask($0) } ?? .allowed

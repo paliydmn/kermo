@@ -45,8 +45,9 @@ final class AISession {
     /// Ask and Edit: nothing that changes goes — whatever an Agent turn of the same chat was allowed — and the most
     /// the user is ever asked to allow is reading. Refused in words, unasked.
     var readOnly = false
-    /// Settings › AI's "Never Send": nothing on a production server is read for the model.
-    var noProduction = false
+    /// Settings › AI's "Never Send": nothing on a production server is read for the model — read at each check, so a
+    /// chat or an agent already going keeps to a change, a question on screen when it changed too.
+    var noProduction: Bool { AISettings.neverProd(app.defaults) }
     /// Where `propose_edit`'s diff is shown (the chat's card); nil — an outside agent's session: it says in words
     /// whether the change fits.
     var proposes: (@MainActor (AIEdit.Proposal, SFTPTarget?, String) -> Void)?
@@ -111,6 +112,11 @@ final class AISession {
 
     /// `changes`: set once the targets are known — the call may change something.
     private func pass(_ tool: AITool, _ args: [String: ToolValue], afterRead: Bool, changes: inout Bool, look: Look?, run: Runner?) async -> (String, AIResult) {
+        // Never Send turned on after production text went to the model: it can't be taken back, so nothing more goes
+        // on — any call, as the chat goes no further (an outside agent's session; the chat stops before its turn).
+        if noProduction, readProduction {
+            return ("refused: production read before Never Send", .failure("This session read on a production server before Settings › AI said Never Send, and the model still holds that text: nothing more is done here. Tell the user to restart the agent (or start a New Chat)."))
+        }
         // Each server named, found and learned before it becomes a place: its key is where ssh says the address goes.
         var named: [String: SFTPTarget?] = [:]
         for arg in Set(tool.places.map(\.server)) {
@@ -169,7 +175,12 @@ final class AISession {
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
-            return Self.warned(asks ?? Self.question(tool, args, why, on: ends, over: look != nil && call.overwrites), afterRead)
+            // Which way it goes, by the places the targets resolved to (not the model's words); a path has no control
+            // character (`AITarget.normal`).
+            let between = why == .betweenMachines ? targets.first { !AIScope.changes($0) }.flatMap { from in targets.first(where: AIScope.changes).map { to in
+                (what: String(((from.path ?? "") as NSString).lastPathComponent.prefix(60)).bidiVisible, from: self.name(from.place), to: self.name(to.place))
+            } } : nil
+            return Self.warned(asks ?? Self.question(tool, args, why, on: ends, over: look != nil && call.overwrites, between: between), afterRead)
         }, asker: asker)
         switch passed {
         case .locked(let t): return ("locked", .failure("\(Self.label(t)) stays locked: the user didn't unlock it. Nothing was done."))
@@ -329,7 +340,7 @@ final class AISession {
         }
         let mac = wide ? "On this Mac that reaches your own files — ~/Library/LaunchAgents and ~/.ssh too."
             : needs.contains { $0.place == .mac && $0.level == .view } ? "On this Mac reading is any file you can read, ~/.ssh too." : nil
-        let after = reads ? nil : "Deleting, writing over a file and any change on a production server still ask each time."
+        let after = reads ? nil : "Deleting, writing over a file, a copy from one machine to another and any change on a production server still ask each time."
         c.note = [mac, limit, "What it reads goes to your AI provider, secrets it recognises as •••.", after].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true
         guard await ask(Self.warned(c, afterRead)) else { return false }
@@ -337,11 +348,14 @@ final class AISession {
         return true
     }
 
-    /// The question a call in scope still gets: production, a removal, writing over what is there.
-    static func question(_ tool: AITool, _ args: [String: ToolValue], _ why: AIScope.Reason, on ends: [SFTPTarget], over: Bool = false) -> Confirm {
+    /// The question a call in scope still gets: production, a removal, a copy between machines (`between`: what, from
+    /// where, to where), writing over what is there.
+    static func question(_ tool: AITool, _ args: [String: ToolValue], _ why: AIScope.Reason, on ends: [SFTPTarget], over: Bool = false,
+                         between: (what: String, from: String, to: String)? = nil) -> Confirm {
         let what = switch why {
         case .production: "change a production server"
         case .removes: "delete"
+        case .betweenMachines: between.map { "copy “\($0.what)” from \($0.from) to \($0.to)" } ?? "copy from one machine to another"
         case .overwrites: "write over what is there"
         case .unclear, .always: "do this"
         }
@@ -350,8 +364,10 @@ final class AISession {
         c.runs = tool.name
         let commands = Set(tool.places.compactMap { if case .run(let arg) = $0.access { arg } else { nil } })
         c.command = told(args, cut: 400, whole: commands).joined(separator: "\n")   // what runs, whole: the box scrolls
-        if over, why == .production { c.note = "It writes over the file that is there." }   // production is the reason told; this too
-        c.irreversible = why != .production || over
+        // The reason told is production or the copy's way; writing over is said too.
+        let mild = why == .production || why == .betweenMachines
+        if over, mild { c.note = "It writes over the file that is there." }
+        c.irreversible = !mild || over
         c.returnCancels = true
         return c
     }

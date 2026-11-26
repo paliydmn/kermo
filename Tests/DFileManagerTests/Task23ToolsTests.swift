@@ -240,12 +240,14 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(r.isError && r.text.contains("only reads"), "\(name): \(r.text)")
         }
         #expect(asked().isEmpty && s.scope.grants.isEmpty && FileManager.default.fileExists(atPath: dir + "/a.txt"))
-        s.noProduction = true
+        let std = UserDefaults.standard, was = std.object(forKey: "aiProduction")
+        defer { if let was { std.set(was, forKey: "aiProduction") } else { std.removeObject(forKey: "aiProduction") } }
+        std.set("never", forKey: "aiProduction")
         var r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.journal.last?.decision == "refused: production")
         r = await s.call("request_scope", needs(["box", "view", "", "look"]))   // not even asked
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.scope.grants.isEmpty)
-        s.noProduction = false
+        std.removeObject(forKey: "aiProduction")
         answer([0])
         r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && r.text.hasSuffix("x\n"), "\(r.text)")
@@ -577,8 +579,9 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(lines.map { $0["action"] as? String } == ["save", "save", "copy"] && lines.allSatisfy { $0["by"] as? String == "ai" && $0["exit"] as? Int == 0 }, "\(lines)")
     }
 
-    /// copy: what isn't there yet is copied without a question; a taken name asks, and only that name is written
-    /// over — inside a merged folder, and for a name taken after the look, what is there stays and is told.
+    /// copy: from one machine to another asks each time (Allow Once, never a grant), naming both; a taken name says
+    /// it writes over, and only that name is written over — for a name taken after the look, what is there stays
+    /// and is told.
     @Test func theAssistantCopies() async throws {
         let (s, dir, asked, answer) = try await aiAnswering()
         defer { aiTearDown(s, dir) }
@@ -590,15 +593,21 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         }
         var r = await copy("one.txt")   // Cancel at "Allow…"
         #expect(r.isError && aiNames(dst).isEmpty && asked().count == 1, "\(r.text)")
-        answer([0])
+        answer([0, 0])   // Allow…, then Allow Once
         r = await copy("one.txt")
-        #expect(!r.isError && r.text.contains("1 of 1 file copied") && aiText(dst + "/one.txt") == "one" && asked().count == 2, "\(r.text)")
+        #expect(!r.isError && r.text.contains("1 of 1 file copied") && aiText(dst + "/one.txt") == "one" && asked().count == 3, "\(r.text)")
+        #expect(asked().last == "Let the assistant copy “one.txt” from this Mac to box?")
         try Data("one, newer".utf8).write(to: URL(fileURLWithPath: src + "/one.txt"))
-        r = await copy("one.txt")   // taken: Cancel
-        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().last == "⚠ Let the assistant write over what is there?", "\(r.text)")
+        var notes: [String?] = []
+        let asker = s.asker
+        s.asker = { c, w in notes.append(c.note); return await asker!(c, w) }
+        r = await copy("one.txt")   // asked again — Allow Once wasn't a grant — and says it writes over: Cancel
+        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().count == 4 && asked().last == "⚠ Let the assistant copy “one.txt” from this Mac to box?", "\(r.text)")
+        #expect(notes.last??.hasSuffix(" It writes over the file that is there.") == true, "\(notes)")
+        s.asker = asker
         answer([0])
         r = await copy("one.txt")
-        #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer", "\(r.text)")
+        #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer" && asked().count == 5, "\(r.text)")
 
         // A folder of that name there, a link, a folder reached through a link, the item's own folder: not copied.
         try fm.createDirectory(atPath: dst + "/tree", withIntermediateDirectories: true)
@@ -617,12 +626,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try fm.removeItem(atPath: dst + "/way")
 
         try Data("mine".utf8).write(to: URL(fileURLWithPath: src + "/raced"))
+        answer([0])
         r = await aiCall(s, "copy", ["from_server": .string("mac"), "from_path": .string(src + "/raced"), "to_server": .string("box"), "to_folder": .string(dst)]) {
             fm.createFile(atPath: dst + "/raced", contents: Data("theirs".utf8))
         }
         #expect(r.isError && r.text.contains("left as they were") && aiText(dst + "/raced") == "theirs", "\(r.text)")
 
-        answer([0])   // the other way: into a folder of this Mac
+        answer([0, 0])   // the other way: into a folder of this Mac — Allow…, then Allow Once
         try fm.createDirectory(atPath: dir + "/back", withIntermediateDirectories: true)
         r = await copy("tree", from: "box", to: "mac", into: dir + "/back")
         #expect(!r.isError && aiNames(dir + "/back") == ["tree", "tree/a", "tree/b"], "\(r.text)")
@@ -632,6 +642,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         // Stopped on its way: no file cut short stays.
         let big = src + "/big.bin"
         fm.createFile(atPath: big, contents: Data(count: 48 << 20))
+        answer([0])
         let call = Task { await copy("big.bin") }
         try await Task.sleep(for: .milliseconds(60))
         call.cancel()
@@ -825,6 +836,42 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         for _ in 0..<300 where !second.gone { try? await Task.sleep(for: .milliseconds(10)) }
         var st = stat()
         #expect(second.gone && agents.all.isEmpty && AIAgents.socket == nil && lstat(path + "/mcp.sock", &st) != 0)
+    }
+
+    /// Review 6 PR 8: Never Send holds for an agent as for the chat — read at each call, so one connected before the
+    /// switch changed keeps to it from its next call; one that read on production before is refused whatever it asks.
+    @Test func neverSendHoldsForAnAgentAlreadyConnected() async throws {
+        let (s, dir, _, _) = try await aiAnswering(prod: true)
+        let app = s.app, path = "/tmp/dfm-mcp-" + String(UUID().uuidString.prefix(8)), std = UserDefaults.standard, was = std.object(forKey: "aiProduction")
+        mkdir(path, 0o700)
+        defer {
+            aiTearDown(s, dir)
+            try? FileManager.default.removeItem(atPath: path)
+            AppDelegate.answering = nil
+            if let was { std.set(was, forKey: "aiProduction") } else { std.removeObject(forKey: "aiProduction") }
+        }
+        try "hello\n".write(toFile: dir + "/a.txt", atomically: true, encoding: .utf8)
+        var asked: [String] = []
+        AppDelegate.answering = { title, _, _ in asked.append(title); return 0 }
+        let agents = try #require(AIAgents(app, at: path + "/mcp.sock") { _ in "zsh" })
+        app.agents = agents
+        defer { agents.stop(); app.agents = nil }
+        std.set("never", forKey: "aiProduction")
+        let agent = StubAgent(path + "/mcp.sock")
+        try #require(await agent.admitted)
+        _ = await agent.ask(1, "initialize", ["protocolVersion": "2025-11-25", "clientInfo": ["name": "Stub Code"]])
+        let onBox: [String: ToolValue] = ["server": "box", "path": .string(dir + "/a.txt")]
+        var r = await agent.call(2, "read_file", onBox)
+        #expect(r?.isError == true && r?.text.contains("production server goes to the AI") == true && asked.isEmpty, "a new agent: from its first call — \(r?.text ?? "")")
+        std.removeObject(forKey: "aiProduction")
+        r = await agent.call(3, "read_file", onBox)
+        #expect(r?.isError == false && r?.text.hasSuffix("hello\n") == true && asked.count == 1, "Ask Once: asked, then read — \(r?.text ?? "")")
+        std.set("never", forKey: "aiProduction")   // turned on while it is connected
+        for (id, args): (Int, [String: ToolValue]) in [(4, onBox), (5, ["server": "mac", "path": .string(dir + "/a.txt")])] {
+            r = await agent.call(id, "read_file", args)
+            #expect(r?.isError == true && r?.text.contains("restart the agent") == true && asked.count == 1, "it holds production text: nothing more, here either — \(r?.text ?? "")")
+        }
+        #expect(agents.all.first?.session.journal.last?.decision == "refused: production read before Never Send")
     }
 
     /// Settings › AI's switch: on — a socket, Window ▸ AI Scope, the variable for new tabs; off — none of them, and

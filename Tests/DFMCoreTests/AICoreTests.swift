@@ -110,9 +110,35 @@ import Testing
         let m = AISecrets.mask(text)
         #expect(m.text == masked && m.hidden == hidden, Comment(rawValue: text))
     }
+    // Review 6 PR 8: keys written with a dash or another prefix, a command line's flags, Apache's MD5 hashes.
+    let pw = "pass" + "word", apr = "$apr" + "1$abcdefgh$ABCDEFGHIJKLMNOPQRSTUV"
+    let more: [(String, String, Int)] = [
+        ("APP_KEY=base64:abcDEF123=", "APP_KEY=•••", 1), ("api-key: abc123", "api-key: •••", 1), ("X-Api-Key: abc123", "X-Api-Key: •••", 1),
+        ("api_keys: abc", "api_keys: •••", 1), ("\"privateKeyHex\": \"0abc\"", "\"privateKeyHex\": •••", 1), ("apiKeyValue: abc", "apiKeyValue: •••", 1), ("ENCRYPTION_KEY=abc", "ENCRYPTION_KEY=•••", 1),
+        ("mysql --\(pw) hunter2 --host db", "mysql --\(pw) ••• --host db", 1), ("mysql --\(pw)=hunter2", "mysql --\(pw)=•••", 1),
+        ("vault login --token 'a b'", "vault login --token •••", 1), ("x --db-passphrase abc", "x --db-passphrase •••", 1),
+        ("curl --api-key abc --api_key def", "curl --api-key ••• --api_key •••", 2), ("admin:\(apr)", "admin:•••", 1),
+        // Hidden on purpose — a key's name says secret, whatever follows it: errs towards hiding.
+        ("api-key-rotation-days: 30", "api-key-rotation-days: •••", 1), ("--\(pw)-file=/etc/pw", "--\(pw)-file=•••", 1),
+        // Not secrets: a port, a next flag, a path given as one, keys that only end in "key", plain words.
+        ("ssh -p 2222 web-01", "ssh -p 2222 web-01", 0), ("mysql --\(pw) --host db", "mysql --\(pw) --host db", 0),
+        ("x --\(pw)-file /etc/pw", "x --\(pw)-file /etc/pw", 0), ("x --no-\(pw) db", "x --no-\(pw) db", 0), ("x --token-file /t", "x --token-file /t", 0),
+        ("KEY=value", "KEY=value", 0), ("PUBLIC_KEY=ssh-ed25519 AAAA", "PUBLIC_KEY=ssh-ed25519 AAAA", 0), ("SSH_KEY=/root/.ssh/id", "SSH_KEY=/root/.ssh/id", 0),
+        ("primary_key: id", "primary_key: id", 0), ("sort_keys=True", "sort_keys=True", 0), ("foreign_keys=ON", "foreign_keys=ON", 0),
+        ("app_keyboard=us", "app_keyboard=us", 0), ("Forgot your \(pw)? Reset it.", "Forgot your \(pw)? Reset it.", 0),
+    ]
+    for (text, masked, hidden) in more {
+        let m = AISecrets.mask(text)
+        #expect(m.text == masked && m.hidden == hidden, Comment(rawValue: text + " → " + m.text))
+        #expect(AISecrets.mask(m.text).text == m.text, "masked twice is masked once: \(text)")
+    }
     #expect(AISecrets.mask("token: Bearer abcdefghijkl123").text == "token: ••• •••", "the token goes, not only the word before it")
     let long = String(repeating: "a.", count: 20_000) + String(repeating: "aB-_9", count: 8_000), start = Date()
     #expect(AISecrets.mask(long).hidden == 0 && Date().timeIntervalSince(start) < 1, "a long token-like run isn't quadratic")
+    for word in ["api_key_", "pass" + "word", "app-key."] {
+        let names = String(repeating: word, count: 5000), began = Date()
+        #expect(AISecrets.mask(names).hidden == 0 && Date().timeIntervalSince(began) < 1, "a long run of key names isn't quadratic: \(word)")
+    }
 }
 
 @Test func aiPathsAreNormalByTheirWordsAlone() {
@@ -167,7 +193,10 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     let need = AIScope.Need(place: .mac, level: .work, folder: NSHomeDirectory() + "/Downloads")
     #expect(decide(s, "copy", copy, overwrites: false) == .outside([need]))
     s.grant(need)
-    #expect(decide(s, "copy", copy, overwrites: false) == .allowed && decide(s, "copy", copy) == .ask(.overwrites))
+    #expect(decide(s, "copy", copy, overwrites: false) == .ask(.betweenMachines) && decide(s, "copy", copy) == .ask(.betweenMachines),
+            "from one machine to another: asked each time, in scope too")
+    let here = [AITarget(.mac, "/tmp/a", .read), AITarget(.mac, "~/Downloads", .write)]
+    #expect(decide(s, "copy", here, overwrites: false) == .allowed && decide(s, "copy", here) == .ask(.overwrites), "within one machine: as before")
 
     // All: everything but what is asked always.
     s.grant(web, .all)
@@ -175,11 +204,21 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     #expect(decide(s, "write_file", [AITarget(web, "/etc/passwd", .write)]) == .ask(.overwrites) && decide(s, "run_command", run("mv a b")) == .ask(.overwrites))
     #expect(decide(s, "copy", [AITarget(web, "/srv/a", .remove), AITarget(.mac, "~/Downloads", .write)], overwrites: false) == .ask(.removes), "a move, when there is one")
 
+    // All on both ends still asks for a copy between them — server to server, this Mac to a server — and a removal
+    // and production stay the stronger reasons told.
+    s.grant(.mac, .all)
+    let other = AIPlace.server("backup")
+    s.grant(other, .all)
+    #expect(decide(s, "copy", [AITarget(web, "/srv/a", .read), AITarget(other, "/srv", .write)], overwrites: false) == .ask(.betweenMachines))
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(web, "/srv", .write)], overwrites: false) == .ask(.betweenMachines))
+    #expect(decide(s, "copy", [AITarget(web, "/srv/a", .read), AITarget(web, "/srv/b", .write)], overwrites: false) == .allowed)
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(prodDB, "/srv", .write)], overwrites: false) == .outside([.init(place: prodDB, level: .work, folder: "/srv")]))
     // Production: reading is free in scope, every change asks.
     s.grant(prodDB, .all)
     #expect(decide(s, "read_file", [AITarget(prodDB, "/etc/hosts", .read)]) == .allowed && decide(s, "run_command", run("ps aux", on: prodDB)) == .allowed)
     #expect(decide(s, "run_command", run("make", on: prodDB)) == .ask(.production) && decide(s, "run_command", run("rm x", on: prodDB)) == .ask(.production))
     #expect(decide(s, "write_file", [AITarget(prodDB, "/srv/a", .write)], overwrites: false) == .ask(.production))
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(prodDB, "/srv", .write)], overwrites: false) == .ask(.production))
 
     // A call that doesn't fit its tool is asked, never guessed.
     #expect(decide(s, "read_file", []) == .ask(.unclear) && decide(s, "read_file", write, overwrites: false) == .ask(.unclear))
