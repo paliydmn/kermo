@@ -14,6 +14,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-26
+
 ### Added
 - A **Refresh** button in the path bar, next to Copy: reads the panel again, as ⌘R does. → [Path bar](docs/window.md#path-bar)
 
@@ -571,7 +573,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.2...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.2.1
 [2.2]: https://github.com/paliydmn/kermo/releases/tag/v2.2
 [2.1.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1.1
 [2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1
