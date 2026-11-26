@@ -14,6 +14,9 @@ Release:
 
 ## [Unreleased]
 
+### Added
+- A **Refresh** button in the path bar, next to Copy: reads the panel again, as ⌘R does. → [Path bar](docs/window.md#path-bar)
+
 ### Fixed
 - Synchronize with **Include hidden** off leaves an item out on both sides when either side hides it; an item this Mac hides by flag (`~/Library`) no longer shows its server copy as "only on the right", where Mirror would delete it. → [Synchronize folders](docs/search-compare.md#synchronize-folders)
 - Copying from a server to a FAT or exFAT disk no longer fails on every new file.
