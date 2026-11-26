@@ -31,8 +31,9 @@ import Testing
 /// A client connected to 127.0.0.1:`port` (-1: refused); reads wait up to 10 s.
 private func dial(_ port: Int) -> Int32 {
     let s = socket(AF_INET, SOCK_STREAM, 0)
-    var wait = timeval(tv_sec: 10, tv_usec: 0)
+    var wait = timeval(tv_sec: 10, tv_usec: 0), on: Int32 = 1
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))   // a closed one fails a test, not the whole run
     var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: UInt16(port).bigEndian,
                         sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
     let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
@@ -193,6 +194,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let c = dial(p[0]), d = dial(p[0])
         defer { close(c); close(d) }
         await until { tunnels.connections(vault.tunnels[0], of: vault) == 2 }
+        #expect(echoes(c, "up") && echoes(d, "up"), "both children run: one still starting would end with the port")
         tunnels.relock([vault, db])
         #expect(!tunnels.isListening(vault.tunnels[0], of: vault) && tunnels.isListening(db.tunnels[0], of: db))
         #expect(dial(p[0]) == -1)

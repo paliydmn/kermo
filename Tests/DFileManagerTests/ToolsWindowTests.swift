@@ -110,9 +110,12 @@ extension ServerLockTests {
         ToolsWindow.restore(app, saved)
         let back = try #require(ToolsWindow.main), alone = ToolsWindow.alone
         #expect(back !== main && back.page.map { ServerRow.key($0.target) } == ServerRow.key(here.target) && back.page?.tab == "ufw")
-        #expect(back.window.frame == NSRect(x: 120, y: 140, width: 960, height: 600), "\(back.window.frame)")
-        #expect(alone.count == 1 && alone.first?.window.frame == NSRect(x: 200, y: 180, width: 720, height: 500) && alone.first?.page?.tab != "nope",
-                "\(alone.map(\.window.frame)) \(alone.first?.page?.tab ?? "-")")
+        // Sizes and where one stands to the other: AppKit may put both on another display (one left of the main one),
+        // so not the frames themselves.
+        let b = back.window.frame, a = try #require(alone.first?.window.frame)
+        #expect(b.size == NSSize(width: 960, height: 600) && a.size == NSSize(width: 720, height: 500) && a.minX - b.minX == 80 && a.minY - b.minY == 40,
+                "\(b) \(a)")
+        #expect(alone.count == 1 && alone.first?.page?.tab != "nope", "\(alone.first?.page?.tab ?? "-")")
         #expect(bench.trips == trips && buttons(back.page!.body).map(\.title) == ["Connect"], "not connected: nothing sent")
     }
 

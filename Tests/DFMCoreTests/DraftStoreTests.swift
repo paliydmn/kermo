@@ -25,7 +25,16 @@ private func untitled(_ n: Int, dirty: Bool = true) -> EditorSession.Doc {
 private func reopen(_ s: DraftStore) async throws -> (store: DraftStore, session: EditorSession, damaged: String?) {
     try await s.flush()
     s.release()
-    return try DraftStore.open(s.dir)
+    return try openAgain(s.dir)
+}
+
+/// Opened again right after a `release`: `.locked` for a moment is another test's fork holding a copy of the lock's
+/// descriptor until its exec (CI and loaded runs saw it); for good, it's a failure.
+private func openAgain(_ dir: String) throws -> (store: DraftStore, session: EditorSession, damaged: String?) {
+    for _ in 0..<50 {
+        do { return try DraftStore.open(dir) } catch DraftStore.Failure.locked { usleep(20_000) }
+    }
+    return try DraftStore.open(dir)
 }
 
 /// Waits here (a test may: the store's queue is what's held up).
@@ -107,7 +116,7 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
     #expect(revisions(store.dir).count == 3, "the crash's revisions are on disk")
 
     store.release()
-    let (again, back, _) = try DraftStore.open(store.dir)
+    let (again, back, _) = try openAgain(store.dir)
     #expect(try back.docs.map(\.id) == [a.id] && again.text(of: back.docs[0]) == "first")
     #expect(revisions(store.dir) == ["\(a.id.uuidString).1"], "the next launch sweeps what no manifest names")
 }
@@ -179,7 +188,7 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
     store.release()
     try Data("{ not json".utf8).write(to: URL(fileURLWithPath: store.dir + "/session.json"))
 
-    let (_, session, damaged) = try DraftStore.open(store.dir)
+    let (_, session, damaged) = try openAgain(store.dir)
     #expect(session == EditorSession())
     let aside = try #require(damaged)
     #expect(aside.hasPrefix(store.dir + "/damaged/"))
@@ -198,7 +207,7 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
 
     let newer = Data(#"{"version":2,"docs":"another shape"}"#.utf8)
     try newer.write(to: URL(fileURLWithPath: dir + "/session.json"))
-    #expect(throws: DraftStore.Failure.newer(2)) { try DraftStore.open(dir) }
+    #expect(throws: DraftStore.Failure.newer(2)) { try openAgain(dir) }
     #expect(try Data(contentsOf: URL(fileURLWithPath: dir + "/session.json")) == newer)
     #expect(!FileManager.default.fileExists(atPath: dir + "/damaged"))
     unlink(dir + "/session.json")
