@@ -6,9 +6,9 @@ import Foundation
 /// backslash, a backtick, a separator inside quotes, a `$`, `{` or parenthesis outside single quotes, a path in
 /// front of the program, a device under /dev named in the command all make it not read-only — and whatever it
 /// passes may run as root (`sudo cat`).
-/// `overwrites` catches only what says so itself (`rm`, `mv`, `> file`, `--delete`…): `cp`, `tee`, `sed -i`,
-/// `tar x`, a script or `sh -c` can write over a file without a word of it here. So "deleting and overwriting always
-/// ask" holds for the typed tools (copy, write), not for a command run under Work-with-commands or All — the card
+/// `overwrites` catches what says so itself (`rm`, `mv`, `> file`, `--delete`, `cp`, `tee`, `sed -i`, `tar x`…):
+/// a script, `sh -c "$x"` or a program it doesn't know can write over a file without a word of it here. So
+/// "deleting and overwriting always ask" holds for the typed tools (copy, write), not for a command run under Work-with-commands or All — the card
 /// that grants those says so. Reading isn't always free either (a command that never ends: the runner's time limit).
 public enum AICommand {
     /// Every command of the list or pipeline is on the allow-list with arguments that only read; no redirection into
@@ -173,11 +173,27 @@ public enum AICommand {
     /// The command says itself that it deletes or writes over something: `rm`, `rmdir`, `mv`, `dd`, `truncate`,
     /// `shred`, `unlink`, `mkfs…` as any word of it (`sh -c 'rm x'`, `xargs rm` — once too often for `echo rm`),
     /// `-delete`, `--del…` (rsync's `--delete`, however short), `--remove-source-files`, `git clean`, `--hard`, and `> file` (`ShellRisk.writesOver`).
+    /// And, in a command that isn't `isReadOnly`, a command of the list run as a program that writes where it's told:
+    /// `cp`, `tee`, `install`, `ln`, `rsync`, `scp`, `patch`, `unzip`, `tar` (but `tar -t`), `sed -i` / `perl -i`.
     /// Narrower than `ShellRisk.isDangerous` on purpose: chmod, chown and stopping a service aren't asked always.
     public static func overwrites(_ command: String) -> Bool {
         let w = command.components(separatedBy: CharacterSet(charactersIn: ";&|\n()`'\"\\").union(.whitespaces)).map { ($0 as NSString).lastPathComponent }
-        return w.contains { ShellRisk.removes.contains($0) || $0 == "rmdir" || $0.hasPrefix("mkfs") || $0 == "-delete" || $0.hasPrefix("--del")
-                            || $0 == "--remove-source-files" || $0 == "--hard" }
-            || w.contains("git") && w.contains("clean") || ShellRisk.writesOver(command)
+        if w.contains(where: { ShellRisk.removes.contains($0) || $0 == "rmdir" || $0.hasPrefix("mkfs") || $0 == "-delete" || $0.hasPrefix("--del")
+                               || $0 == "--remove-source-files" || $0 == "--hard" })
+            || w.contains("git") && w.contains("clean") || ShellRisk.writesOver(command) { return true }
+        guard !isReadOnly(command) else { return false }   // `grep -i x | sed -n p`
+        return command.components(separatedBy: CharacterSet(charactersIn: ";&|\n()`")).contains { one in
+            guard let (name, a) = ShellRisk.program(one) else { return false }
+            // -i in a cluster of short options, before one that takes the rest as its value (`-Mstrict`, `-ei`).
+            let inPlace = { (values: String) in
+                a.contains { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.dropFirst().prefix { !values.contains($0) }.contains("i") } || long(a, ["--in-place"])
+            }
+            switch name {
+            case "tar": return !(short(a, "t") || long(a, ["--list"]) || a.first.map { !$0.hasPrefix("-") && $0.hasPrefix("t") } == true)   // `tar tf`
+            case "sed": return inPlace("efl")
+            case "perl": return inPlace("MmIxdDCl0e")
+            default: return ["cp", "tee", "install", "ln", "rsync", "scp", "patch", "unzip"].contains(name)
+            }
+        }
     }
 }

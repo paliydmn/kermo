@@ -67,12 +67,20 @@ import Testing
 @Test func aiOverwritesIsWhatTheCommandSaysItself() {
     for c in ["rm x", "sudo rm -rf /srv/old", "rmdir d", "mv a b", "sh -c 'rm x'", "ls | xargs rm", "/bin/rm x", "truncate -s 0 log", "shred key", "dd if=a of=b",
               "mkfs.ext4 /dev/sdb1", "unlink x", "find . -name '*.tmp' -delete", "rsync -a --delete a/ b/", "rsync --delete-after a b", "rsync -a --del a b", "rsync --remove-source-files a b",
-              "git clean -fd", "git reset --hard", "git rm x", "echo x > file", "cat a 2> err", "(rm x)"] {
+              "git clean -fd", "git reset --hard", "git rm x", "echo x > file", "cat a 2> err", "(rm x)",
+              // …and the programs that write where they're told, unless the command only reads.
+              "cp a b", "sudo cp -a a /etc/b", "tee out", "echo x | sudo tee /etc/f", "sed -i s/a/b/ f", "sed -Ei.bak s/a/b/ f", "sed --in-place s/a/b/ f",
+              "perl -pi -e s/a/b/ f", "tar xf a.tar", "tar -cf a.tar d", "tar -xzf a.tgz -C /srv", "tar --create -f a.tar d", "install -m 644 a /usr/bin/a",
+              "ln -sf a b", "rsync -a a/ b/", "scp a host:b", "patch -p1 < p.diff", "unzip -o a.zip",
+              "sed --in s/a/b/ f", "sed -ni.bak p f", "tar -tf a; tar -xf b", "tar -xzf a.tgz && find . -type f", "tar xf a.tar; ls -lt"] {
         #expect(AICommand.overwrites(c), Comment(rawValue: c))
     }
     // Not asked always (README §4): services, sudo, permissions; and what the words don't say — the honest limit.
     for c in ["systemctl restart nginx", "sudo systemctl stop nginx", "chmod 600 key", "chown www x", "echo x >> log", "ls 2>/dev/null", "make 2>&1", "mkdir d",
-              "cp a b", "tee out", "sed -i s/a/b/ f", "tar xf a.tar", "cat rmdir.log"] {
+              "cat rmdir.log", "grep cp f", "grep -i x f | sed -n 1p", "tar -tf a.tar", "tar -tvzf a.tgz", "tar tf a.tar", "tar --list -f a.tar",
+              // …a program that writes only where it's the program, -i only where it's sed's or perl's own.
+              "apt install nginx", "make install", "systemctl restart rsync", "which tar", "dpkg -l | grep tar", "pgrep rsync",
+              "docker logs x | sed s/a/b/ | grep -i err", "perl -Mstrict -e 'print 1'", "sed -e s/a/b/ f"] {
         #expect(!AICommand.overwrites(c), Comment(rawValue: c))
     }
     #expect(ShellRisk.isDangerous("chmod +x a") && ShellRisk.isDangerous("rm x") && !ShellRisk.isDangerous("rmdir x"), "the production question's list is its own")

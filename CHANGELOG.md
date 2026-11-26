@@ -20,6 +20,8 @@ Release:
 - A server row's buttons under the mouse are narrower, so its name keeps more of its start and a double-click on it opens the files. → [Servers](docs/servers.md)
 
 ### Fixed
+- The AI asks every time before a command that writes where it's told — `cp`, `tee`, `sed -i`, `tar` (listing aside), `rsync`, `ln`, `install`, `unzip`, `patch` — as it does for `rm` and `> file`. → [What asks every time](docs/ai.md#what-asks-every-time)
+- The AI can no longer read Kermo's local copy of a server's file as this Mac's, which got around **Never Send** for production servers. → [AI](docs/ai.md)
 - ⌘E ↩ and Execute in Terminal no longer run the command in the wrong folder: when the shell couldn't go to the panel's or the file's folder (gone, no access), nothing is typed after the `cd`. → [Command line](docs/commands.md#command-line)
 - `%D` no longer stands for the folder hidden behind the other panel's list (Services, Containers, an overview): the command doesn't run and the status line says why.
 - A Tools tab on a server with no connection said "Connecting…" for ever; it now says the server isn't connected and offers **Connect**. → [Tools](docs/tools.md)

@@ -775,6 +775,25 @@ enum TempCopies {
     /// The file lives in one of these copies (so Save As doesn't offer that folder: it goes with the copy).
     static func holds(_ url: URL) -> Bool { prefixes.contains(where: url.deletingLastPathComponent().lastPathComponent.hasPrefix) }
 
+    /// `path` is one of these copies or anything inside one (a server's file read here would be this Mac's to the
+    /// assistant, past Never Send). By device and inode of the temp folder, as far as the path exists: a link, the
+    /// letter case or /System/Volumes/Data can't hide it.
+    static func within(_ path: String) -> Bool {
+        var t = stat()
+        guard stat(NSTemporaryDirectory(), &t) == 0 else { return false }
+        var p = path, rest: [String] = [], real: String?
+        while real == nil {
+            if let r = realpath(p, nil) { real = String(cString: r); free(r) } else if p == "/" { return false }
+            else { rest.insert((p as NSString).lastPathComponent, at: 0); p = (p as NSString).deletingLastPathComponent }
+        }
+        let parts = (real! as NSString).pathComponents + rest
+        return parts.indices.dropFirst().contains { i in
+            var s = stat()
+            return prefixes.contains(where: parts[i].hasPrefix) && lstat(NSString.path(withComponents: Array(parts[..<i])), &s) == 0
+                && s.st_dev == t.st_dev && s.st_ino == t.st_ino
+        }
+    }
+
     static func keep(_ dir: String) { FileManager.default.createFile(atPath: (dir as NSString).appendingPathComponent(keptMarker), contents: nil) }
     static func unkeep(_ dir: String) { try? FileManager.default.removeItem(atPath: (dir as NSString).appendingPathComponent(keptMarker)) }
 

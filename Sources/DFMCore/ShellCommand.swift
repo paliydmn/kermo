@@ -133,7 +133,9 @@ public enum ShellRisk {
         command.components(separatedBy: CharacterSet(charactersIn: ";&|\n()`")).contains(where: isDangerousOne) || writesOver(command)
     }
 
-    private static func isDangerousOne(_ command: String) -> Bool {
+    /// One command's program and its arguments, past sudo / doas / env / xargs, their options, VAR=value and a path
+    /// (`/bin/rm`, `\rm`). Words split on blanks: quotes aren't parsed.
+    static func program(_ command: String) -> (name: String, args: [String])? {
         var words = command.split(whereSeparator: \.isWhitespace).map(String.init)[...]
         let name = { (w: String) in (w as NSString).lastPathComponent }   // /usr/bin/sudo, /bin/rm
         var takesValue = ["-u", "-g"]   // `sudo -u www rm …`
@@ -141,8 +143,12 @@ public enum ShellRisk {
             if name(w) == "xargs" { takesValue = ["-I", "-n", "-P", "-L", "-s", "-E"] }   // `xargs -I {} rm {}`
             words = words.dropFirst(takesValue.contains(w) ? 2 : 1)
         }
-        guard let first = words.first.map({ String(name($0).drop(while: { $0 == "\\" })) }) else { return false }   // `\rm`: past the alias
-        let rest = words.dropFirst()
+        guard let first = words.first.map({ String(name($0).drop(while: { $0 == "\\" })) }) else { return nil }   // `\rm`: past the alias
+        return (first, Array(words.dropFirst()))
+    }
+
+    private static func isDangerousOne(_ command: String) -> Bool {
+        guard let (first, rest) = program(command) else { return false }
         switch first {
         case "systemctl": return rest.first { !$0.hasPrefix("-") }.map { ["stop", "restart", "disable", "mask", "kill"].contains($0) } == true
         case "find": return rest.contains { ["-delete", "-exec", "-execdir", "-ok"].contains($0) }

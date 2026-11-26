@@ -296,9 +296,25 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(s.hasRead == (server == box))
         }
         #expect(asked().count == 3 && s.scope.grants.count == 2 && s.scope.grants.values.allSatisfy { $0.level == .view })
+        // Kermo's local copy of a server's file isn't this Mac's: refused unasked, by any spelling of the path or a link.
+        let copies = Foundation.NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString, copy = copies + "/app.conf"
+        try FileManager.default.createDirectory(atPath: copies, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: copies) }
+        try Data("name: prod\n".utf8).write(to: URL(fileURLWithPath: copy))
+        try FileManager.default.createSymbolicLink(atPath: dir + "/link", withDestinationPath: copies)
+        for (tool, args): (String, [String: ToolValue]) in [("read_file", ["path": .string(copy)]), ("list_folder", ["path": .string(copies)]),
+                                                         ("read_file", ["path": .string("/private" + copy)]), ("read_file", ["path": .string("/System/Volumes/Data/private" + copy)]),
+                                                         ("read_file", ["path": .string(dir + "/link/app.conf")]), ("read_file", ["path": .string(copy.replacingOccurrences(of: "dfm-sftp-", with: "DFM-SFTP-"))]),
+                                                         ("read_file", ["path": .string(copies + "/none/x")])] {
+            r = await s.call(tool, args.merging(["server": "mac"]) { a, _ in a })
+            #expect(r.isError && r.text.contains("Kermo's own temporary copies"), "\(args): \(r.text)")
+        }
+        #expect(asked().count == 3 && !TempCopies.within(Foundation.NSTemporaryDirectory()) && !TempCopies.within(dir) && !TempCopies.within("/"))
         r = await s.call("terminal_output", ["server": .string(box)])
         #expect(r.isError && r.text.contains("No terminal tab of \(box)"), "\(r.text)")
         #expect(s.journal.last?.afterRead == true && s.journal.first?.afterRead == false && s.journal.allSatisfy { !$0.changes })
+        r = await s.call("copy", ["from_server": "mac", "from_path": .string(copy), "to_server": "mac", "to_folder": .string(dir)])
+        #expect(r.isError && r.text.contains("Kermo's own temporary copies") && asked().count == 3, "\(r.text)")
     }
 
     /// focus: where the panels stand is told always, their names only where the chat may read; request_scope grants
