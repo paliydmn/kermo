@@ -41,12 +41,14 @@ extension EmbeddedTerminal {
     func enter(_ t: Tab, _ dir: String, typing: @MainActor (Tab, [UInt8]) -> Void = { $0.view.type($1) }) async -> Bool {
         guard let line = ShellContext.typedCd(dir) else { return false }
         typing(t, Array(line.utf8))
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue, access(dir, X_OK) == 0 else { return false }
+        // The same folder by its device and inode, not its spelling: another case, a symlink, a firmlink.
+        let id = { (path: String) -> (dev_t, ino_t)? in var s = stat(); return stat(path, &s) == 0 ? (s.st_dev, s.st_ino) : nil }
+        var st = stat()
+        guard stat(dir, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, access(dir, X_OK) == 0 else { return false }
         t.entering = true
         defer { t.entering = false }
-        let want = Self.real(dir), end = Date().addingTimeInterval(5)
-        while t.shellCwd != want {
+        let end = Date().addingTimeInterval(5)
+        while !(t.shellCwd.flatMap(id).map { $0 == (st.st_dev, st.st_ino) } ?? false) {
             guard Date() < end, tabs.contains(where: { $0 === t }) else { return false }
             try? await Task.sleep(for: .milliseconds(20))
         }

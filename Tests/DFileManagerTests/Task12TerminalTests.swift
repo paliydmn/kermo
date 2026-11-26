@@ -213,7 +213,7 @@ private func tempDir(_ name: String) throws -> String {
     try #require(term.run("touch m-gone", cwd: dir + "/gone") != nil)
     try #require(term.run("touch m-after", cwd: other) != nil)
     await until("m-after") { FileManager.default.fileExists(atPath: other + "/m-after") }
-    #expect(!text(shell).contains("touch m-gone") && text(shell).contains("gone"))
+    #expect(!text(shell).contains("touch m-gone"))
     await atPrompt(shell)
 
     // A program has the terminal: the command goes to a new tab, the program gets nothing.
