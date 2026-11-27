@@ -93,7 +93,8 @@ public struct EditorSession: Codable, Sendable, Equatable {
 
 /// Where `EditorSession` lives (`editor.noindex`): `session.json`, the texts of changed documents in `rev/`, and in
 /// `damaged/` what couldn't be read — moved there, never deleted. Drafts may hold secrets: folders 0700, files 0600,
-/// out of Time Machine. One process at a time (`flock` on `lock`): a second Kermo gets `.locked` and works without drafts.
+/// out of Time Machine. One process at a time (`flock` on `lock`, which holds its pid): a second Kermo gets `.locked` and
+/// hands its launch to that one, or works without drafts.
 ///
 /// A commit writes the new revisions first, then the manifest naming them, each as a temp file renamed into place:
 /// a crash in between leaves the previous session whole, and the revisions it left go at the next launch. Commits run one after
@@ -125,8 +126,10 @@ public final class DraftStore: @unchecked Sendable {   // `lock` guards what's w
     private init(_ dir: String, _ fd: Int32, _ session: EditorSession) { (self.dir, lockFD, last) = (dir, fd, session) }
     deinit { release() }
 
+    public typealias Opened = (store: DraftStore, session: EditorSession, damaged: String?)
+
     /// Takes `dir` (made if missing) and reads its session; `damaged`: the folder an unreadable one was moved to.
-    public static func open(_ dir: String) throws -> (store: DraftStore, session: EditorSession, damaged: String?) {
+    public static func open(_ dir: String) throws -> Opened {
         let fm = FileManager.default
         try fm.createDirectory(atPath: dir + "/rev", withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         chmod(dir, 0o700)   // a folder already there keeps its mode otherwise
@@ -142,6 +145,8 @@ public final class DraftStore: @unchecked Sendable {   // `lock` guards what's w
             close(fd)
             throw e == EWOULDBLOCK ? Failure.locked : posix(e)
         }
+        let pid = "\(getpid())\n"
+        if ftruncate(fd, 0) == 0 { _ = pwrite(fd, pid, pid.utf8.count, 0) }   // who has it, for a second Kermo (`holder`)
         var session = EditorSession(), damaged: String?
         do {
             let data: Data?
@@ -204,6 +209,12 @@ public final class DraftStore: @unchecked Sendable {   // `lock` guards what's w
     /// `pause` after the last key, `most` while typing on.
     public static func delay(forBytes n: Int) -> (pause: Double, most: Double) {
         n <= 1 << 20 ? (0.5, 2) : n <= 8 << 20 ? (2, 10) : (5, 30)
+    }
+
+    /// The pid the lock's holder wrote; nil: none written (a Kermo before 2.3) or `dir` has no lock. It may be stale:
+    /// check it's a running Kermo.
+    public static func holder(_ dir: String) -> pid_t? {
+        (try? String(contentsOfFile: dir + "/lock", encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
     /// Lets go of the lock (tests: to open the folder again, after `flush`).

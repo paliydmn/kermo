@@ -13,6 +13,8 @@ enum Config {
     static let isTestRun = ["swiftpm-testing-helper", "xctest"].contains(ProcessInfo.processInfo.processName)
 
     static func path(_ name: String) -> String { (dir as NSString).appendingPathComponent(name) }
+    /// The editor's drafts (`DraftStore`); its lock is one Kermo per config (`HandOff`).
+    static var drafts: String { path("editor.noindex") }
 
     /// nil if the file doesn't exist; throws if it exists but can't be read or parsed.
     static func load<T: Decodable>(_ name: String, as type: T.Type, in dir: String = dir) throws -> T? {

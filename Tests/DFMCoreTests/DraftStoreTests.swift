@@ -259,3 +259,16 @@ private extension EditorSession {
         self.docs = docs
     }
 }
+
+/// One Kermo per config (`HandOff`): a second open is `.locked`, and the lock names the holder's pid.
+@Test func theLockNamesItsHolder() throws {
+    let dir = tempDir()
+    defer { clean(dir) }
+    #expect(DraftStore.holder(dir) == nil)   // no lock yet
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    try "999999999\n".write(toFile: dir + "/lock", atomically: false, encoding: .utf8)   // a longer stale pid: rewritten whole
+    let (store, _, _) = try DraftStore.open(dir)
+    #expect(throws: DraftStore.Failure.locked) { try DraftStore.open(dir) }
+    #expect(DraftStore.holder(dir) == getpid())   // a second open doesn't wipe it
+    store.release()
+}

@@ -73,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let defaults = UserDefaults.standard
     var bookmarks: [String] = Config.noting(Config.loadEach("bookmarks.json", as: String.self))
     let tunnels = Tunnels()
+    /// The editor's drafts, taken in main.swift before anything else (`HandOff`); nil: take them at the launch (tests).
+    var drafts: Result<DraftStore.Opened, Error>?
     var savedServers: [SavedServer] = Config.noting(Config.loadEach("servers.json", as: SavedServer.self)) {
         didSet {
             tunnels.sync(savedServers)   // a tunnel gone or changed: its port follows
@@ -189,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ToolsWindow.restore(self, session.tools ?? [])   // behind the main window, nothing connected for them
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(active.table)
-        EditorHost.restore(Config.path("editor.noindex"), onServer: remoteEditing)   // its tabs and drafts; the window, if it was up
+        EditorHost.restore(drafts ?? Result { try DraftStore.open(Config.drafts) }, onServer: remoteEditing)   // its tabs and drafts; the window, if it was up
         updatePanelStates()
         updatePrompt()
         Task {   // a locked server's alias saved too must not listen unasked

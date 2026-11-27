@@ -212,7 +212,7 @@ Drafts are kept in `~/.config/dfilemanager/editor.noindex/`, only for documents 
 
 After a crash, the last second or two of typing may be missing: what comes back is the last draft written. If a draft can't be written (a full disk, no permission), its tab shows a red **!**, the status line says why, Kermo tries again at the next change and every 30 seconds, and the last draft written stays; closing that tab and quitting ask about it.
 
-Only one Kermo keeps drafts at a time. Another one (a test build beside the app) shows **Drafts off** over its tabs and in the status line, and closing and quitting ask **Save** / **Don't Save** as they used to.
+One Kermo runs on your settings at a time. Opening Kermo again while one runs — from the Dock, Spotlight, `kermo` or Finder, also another copy of the app such as a test build — brings the running one forward with what you opened, and the second one quits: your drafts and saved servers stay in one place. A copy started with settings of its own (another home folder) runs beside it. If the running one can't be found, the second one starts with **Drafts off** over its tabs and in the status line, and closing and quitting ask **Save** / **Don't Save** as they used to.
 
 ### Closing and changes on disk
 
