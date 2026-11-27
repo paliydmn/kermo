@@ -264,3 +264,96 @@ func everyCheckOfTheProtocol(_ c: Case) {
     let inside = system.preset?.actions?.first { $0.spec.id == "biggest" }?.spec.actions?.first { $0.spec.id == "inside" }
     #expect(system.problems.isEmpty && inside?.spec.output == .list && inside?.spec.list == nil && inside?.spec.actions == nil)
 }
+
+/// Make with AI before 2.3 put commands in `script` (a file's name): such a file loads, each read as `command`, with a
+/// warning; curl's `%{…}` stays the shell's. The file a user had, as it was.
+@Test func aCommandWrittenAsAScriptRunsAsACommand() throws {
+    let json = #"""
+{
+  "schema": 1,
+  "id": "my-tool",
+  "title": "check internet con",
+  "tool": "curl",
+  "about": "Checks that the server can reach the internet: HTTP and DNS, with latency, and an alert when it goes offline.",
+  "icon": "network",
+  "requires": "command -v curl",
+
+  "toolActions": [
+    {
+      "id": "check",
+      "title": "Check Connection",
+      "key": "return",
+      "readonly": true,
+      "exitOk": [0, 1],
+      "output": "window",
+      "script": "echo '== HTTP =='; r=$(curl -s -o /dev/null -m 5 -w '%{http_code} %{time_total}s' http://cp.cloudflare.com/generate_204); set -- $r; if [ \"$1\" = 204 ]; then echo \"OK  ($2)\"; else echo \"FAILED (code $1)\"; fi; echo; echo '== DNS =='; if getent hosts example.com >/dev/null 2>&1 || nslookup example.com >/dev/null 2>&1; then echo 'OK  example.com resolves'; else echo 'FAILED  cannot resolve example.com'; fi; echo; echo '== Ping 1.1.1.1 =='; ping -c 2 1.1.1.1 2>&1 | tail -3"
+    }
+  ],
+  "primary": "check",
+
+  "poll": {
+    "script": "r=$(curl -s -o /dev/null -m 5 -w '%{http_code} %{time_total}' http://cp.cloudflare.com/generate_204 || true); set -- $r; if [ \"$1\" = 204 ]; then ms=$(awk -v t=\"$2\" 'BEGIN{printf \"%d\", t*1000}'); printf '{\"online\":1,\"ms\":%d}\\n' \"$ms\"; else printf '{\"online\":0,\"ms\":0}\\n'; fi",
+    "format": "json"
+  },
+  "watch": { "every": 60 },
+
+  "metrics": {
+    "online": { "title": "Online", "path": "online", "max": 1 },
+    "latency": { "title": "Latency", "path": "ms", "unit": "ms" }
+  },
+  "alerts": [
+    {
+      "id": "offline",
+      "metric": "online",
+      "warn": 1,
+      "crit": 1,
+      "below": true,
+      "checks": 3,
+      "message": "No internet connection"
+    }
+  ],
+  "summary": [
+    { "metric": "latency", "as": "text", "label": "{value} ms" }
+  ],
+  "dashboard": [
+    { "row": [ { "stat": "online" }, { "stat": "latency" } ] },
+    { "charts": [["latency"]] }
+  ]
+}
+"""#
+    let (preset, problems) = check(json, file: "my-tool.json", hasScript: { _ in false })
+    let p = try #require(preset, "\(problems)")
+    #expect(problems.map(\.level) == [.warning, .warning] && problems.map(\.line) == [18, 24], "\(problems)")
+    #expect(problems.allSatisfy { $0.text.contains("next to the preset: it runs as “command” — rename the field, or put the file back") })
+    #expect(p == check(json.replacingOccurrences(of: #""script":"#, with: #""command":"#), file: "my-tool.json").preset)   // read as written so
+    let check = try #require(p.toolActions?.first?.run), poll = try #require(p.poll?.run)
+    #expect(check.script == nil && poll.script == nil)
+    guard case .one(let c)? = check.command, case .one(let q)? = poll.command else { Issue.record("not commands"); return }
+    #expect(c.hasPrefix("echo '== HTTP =='; r=$(curl -s -o /dev/null -m 5 -w '%{http_code} %{time_total}s' ") && q.hasPrefix("r=$(curl"))
+    var taken: [String: String] = [:]
+    #expect(try ToolTemplate.command(.one(q), .init(inputs: [:], rows: [[:]], vars: [:], kermo: [:]), vars: &taken).text == q)   // nothing replaced
+}
+
+/// Only what couldn't load before is read as a command: a script with a space in its name next to the preset stays one,
+/// and with a `command` beside it, or one word and no file, it's still an error.
+@Test func aScriptThatCouldBeAFileStaysAScript() throws {
+    let spaced = check(#"{ \#(head), "script": "my check.sh" }"#, hasScript: { $0 == "my check.sh" })
+    #expect(spaced.problems.isEmpty && spaced.preset?.script == "my check.sh" && spaced.preset?.command == nil)
+    let both = check(#"{ \#(head), "toolActions": [{ "id": "a", "title": "A", "command": "true", "script": "echo hi" }] }"#, hasScript: { _ in false })
+    #expect(both.preset == nil && both.problems.contains { $0.level == .error })
+    let path = check(#"{ \#(head), "script": "../x.sh" }"#, hasScript: { _ in false })
+    #expect(path.preset == nil && path.problems.map(\.text) == ["script: a script is a file next to the preset: no “/” (a command goes in “command”)"])
+    let word = check(#"{ \#(head), "script": "uptime" }"#, hasScript: { _ in false })
+    #expect(word.preset == nil && word.problems.map(\.text) == ["script: uptime isn't next to the preset (a command goes in “command”)"])
+}
+
+/// The tool's own `script`, and a moved command's own problems on the line the file has it.
+@Test func aCommandAsTheToolsScriptAndItsProblemsLine() throws {
+    let json = """
+    { \(head),
+      "script": "curl -s '{url}' > /dev/null" }
+    """
+    let (preset, problems) = check(json, hasScript: { _ in true })   // a "/" with spaces: never a file's name
+    #expect(preset?.command == .one("curl -s '{url}' > /dev/null") && preset?.script == nil, "\(problems)")
+    #expect(problems.filter { $0.text.contains("{url} is inside quotes") }.map(\.line) == [2], "\(problems)")
+}

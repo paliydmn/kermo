@@ -11,6 +11,7 @@ import Testing
     #expect(names("{failure.stage} at {updated_at:ago}") == ["failure.stage", "updated_at:ago"])
     #expect(names("journalctl --since @{from}") == ["from"])
     #expect(names("echo ${HOME} $HOME") == [])                                  // shell's own
+    #expect(names("curl -w '%{http_code} %{time_total}' {url}") == ["url"])     // curl's write-out
     #expect(names("find . -name x -exec rm {} \\;") == [])
     #expect(names("cp x.{a,b}") == [])
     #expect(names("awk '{ print $1 }'") == [])

@@ -20,6 +20,8 @@ Release:
 - Under the mouse a server row keeps its name and state, and a card beside it shows the name in full, the address, what's open and its tunnels, with **SSH**, **SFTP**, **Tunnels ▸** and **⋯**: the buttons no longer cover the name in a narrow sidebar. → [Servers](docs/servers.md#server-rows-in-the-sidebar)
 
 ### Fixed
+- A tool made with **Make with AI…** that put its commands in `script` (meant for a file's name) loads: each runs as `command`, and Problems says to rename the field. The tool format now says which is which. → [Tools](docs/tools.md#the-fields-that-work-now)
+- curl's `-w '%{http_code}'` in a tool's command reaches curl as written: `%{…}`, like `${…}`, is no longer a Kermo placeholder anywhere in a tool.
 - Opening Kermo while another copy runs on the same settings — the Dock's app beside a test build — brings the running one forward with what you opened, instead of starting a second Kermo without your editor's drafts. → [Drafts](docs/viewer-editor.md#drafts)
 - A Tools list whose file on the server is a FIFO no longer hangs for good: it isn't opened, and the list says so.
 - The AI asks every time before a command that writes where it's told — `cp`, `tee`, `sed -i`, `tar` (listing aside), `rsync`, `ln`, `install`, `unzip`, `patch` — as it does for `rm` and `> file`. → [What asks every time](docs/ai.md#what-asks-every-time)

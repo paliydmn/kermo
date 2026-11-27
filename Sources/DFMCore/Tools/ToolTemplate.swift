@@ -11,14 +11,14 @@ public enum ToolTemplate {
     }
 
     /// The placeholders in `s`: `{`, a name that starts with an ASCII letter (then letters, digits, `_`, `.`), an
-    /// optional `:format`, `}` — and not right after `$`. Anything else in braces is shell's or another tool's
-    /// (`${HOME}`, `{}`, `{a,b}`, awk's `{ print $1 }`, Go's `{{.Name}}`) and stays as it is.
+    /// optional `:format`, `}` — and not right after `$` or `%`. Anything else in braces is shell's or another tool's
+    /// (`${HOME}`, curl's `-w '%{http_code}'`, `{}`, `{a,b}`, awk's `{ print $1 }`, Go's `{{.Name}}`) and stays as it is.
     public static func placeholders(in s: String) -> [Placeholder] {
         var found: [Placeholder] = []
         var i = s.startIndex
         while let open = s[i...].firstIndex(of: "{") {
             i = s.index(after: open)
-            guard open == s.startIndex || s[s.index(before: open)] != "$" else { continue }
+            guard open == s.startIndex || !"$%".contains(s[s.index(before: open)]) else { continue }
             var j = i
             while j < s.endIndex, s[j].isASCII, s[j].isLetter || s[j].isNumber || s[j] == "_" || s[j] == "." { j = s.index(after: j) }
             guard j > i, s[i].isASCII, s[i].isLetter, j < s.endIndex else { continue }
