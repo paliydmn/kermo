@@ -43,7 +43,7 @@ private let mine = #"{ "schema": 1, "id": "mine", "title": "Mine", "list": { "sc
     #expect(other.problems == ["tools/mine.json: not loaded: it belongs to another user"])
     #expect(!other.tools.contains { $0.preset.id == "mine" })
     try FileManager.default.removeItem(at: dir.appendingPathComponent("mine.sh"))
-    #expect(ToolLibrary.load(own: dir).problems == ["tools/mine.json: line 1: list.script: mine.sh isn't next to the preset"])
+    #expect(ToolLibrary.load(own: dir).problems == ["tools/mine.json: line 1: list.script: mine.sh isn't next to the preset (a command goes in “command”)"])
 }
 
 @Test func yoursOverridesABuiltInUnlessItHasAnError() throws {

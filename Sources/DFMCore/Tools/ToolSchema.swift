@@ -154,18 +154,29 @@ public enum ToolSchema {
         }
         let lines = lineMap(data)
         var c = Check(lines: lines, hasScript: hasScript, hasSymbol: hasSymbol)
-        guard let top = json as? [String: Any] else { return (nil, [ToolProblem(line: 1, text: "a preset is a JSON object", level: .error)]) }
+        guard var top = json as? [String: Any] else { return (nil, [ToolProblem(line: 1, text: "a preset is a JSON object", level: .error)]) }
         if let n = top["schema"] as? Int, n > version {
             return (nil, [c.problem([.key("schema")], "schema \(n) needs a newer Kermo (this one reads schema \(version))")])
         }
         c.walk(top, .object("preset"), [])
+        // A command in `script` (Make with AI wrote some before 2.3): read as `command`, a warning says so; the file
+        // stays as it is. Only what can't be a script next to the preset, so one that loaded before is read the same.
+        var moved = false
+        for (i, t) in c.texts.enumerated() where t.kind == .script && isCommand(t.text, hasScript) {
+            let to = Array(t.path.dropLast()) + [.key("command")]
+            guard let o = renamed(top, at: t.path[...]) as? [String: Any] else { continue }   // nil: a `command` beside it
+            (top, moved) = (o, true)
+            c.texts[i] = (to, .command, t.text)
+            c.lines[describe(to)] = c.lines[describe(t.path)]
+            c.warn(t.path, "no file “\(t.text)” next to the preset: it runs as “command” — rename the field, or put the file back")
+        }
         if let id = top["id"] as? String, id != (file as NSString).deletingPathExtension {
             c.error([.key("id")], "“\(id)” isn't the file's name: \(id).json")
         }
         c.texts.forEach { c.checkText($0.path, $0.kind, $0.text) }
         if c.problems.allSatisfy({ $0.level != .error }) {
             do {
-                let p = try JSONDecoder().decode(ToolPreset.self, from: data)
+                let p = try JSONDecoder().decode(ToolPreset.self, from: moved ? JSONSerialization.data(withJSONObject: top) : data)
                 c.checkTyped(p)
                 if c.problems.allSatisfy({ $0.level != .error }) { return (p, c.sorted) }
             } catch {
@@ -173,6 +184,27 @@ public enum ToolSchema {
             }
         }
         return (nil, c.sorted)
+    }
+
+    /// A `script` that is a command line: spaces, and a “/” (`> /dev/null`, a URL) or no such file next to the preset.
+    /// A path alone (`../x.sh`) stays an error; a file's name, a script.
+    static func isCommand(_ s: String, _ hasScript: (String) -> Bool) -> Bool {
+        s.contains(where: \.isWhitespace) && (s.contains("/") || !hasScript(s))
+    }
+
+    /// `json` with the field at `path` (a `script`) renamed `command`; nil: no such path, or a `command` already there.
+    static func renamed(_ json: Any, at path: ArraySlice<ToolPath>) -> Any? {
+        switch path.first {
+        case .key(let k)?:
+            guard var o = json as? [String: Any], let v = o[k], path.count > 1 || o["command"] == nil else { return nil }
+            if path.count == 1 { (o[k], o["command"]) = (nil, v) } else { guard let r = renamed(v, at: path.dropFirst()) else { return nil }; o[k] = r }
+            return o
+        case .index(let i)?:
+            guard var a = json as? [Any], a.indices.contains(i), let r = renamed(a[i], at: path.dropFirst()) else { return nil }
+            a[i] = r
+            return a
+        case nil: return json
+        }
     }
 
     /// `actions[2].key` for a path.
@@ -232,7 +264,7 @@ public enum ToolSchema {
 
     /// One check of one file.
     struct Check {
-        let lines: [String: Int]
+        var lines: [String: Int]
         let hasScript: (String) -> Bool
         let hasSymbol: (String) -> Bool
         var problems: [ToolProblem] = []
@@ -345,8 +377,8 @@ public enum ToolSchema {
             case .regex: if (try? Regex(s)) == nil { error(path, "a broken regular expression") }
             case .split: if !["line", "blank"].contains(s), (try? Regex(s)) == nil { error(path, "“line”, “blank” or a regular expression") }
             case .script:
-                if s.contains("/") { error(path, "a script is a file next to the preset: no “/”") }
-                else if !hasScript(s) { error(path, "\(s) isn't next to the preset") }
+                if s.contains("/") { error(path, "a script is a file next to the preset: no “/” (a command goes in “command”)") }
+                else if !hasScript(s) { error(path, "\(s) isn't next to the preset (a command goes in “command”)") }
             case .key: if !ToolSchema.isKey(s) { error(path, "“\(s)” isn't a key (cmd+e, shift+f6, return…)") }
             case .id: if !ToolSchema.isID(s) { error(path, "only a–z, 0–9 and “-”") }
             case .symbol: if !hasSymbol(s) { warn(path, "this macOS has no SF Symbol “\(s)”: Kermo shows a wrench") }
