@@ -74,15 +74,15 @@ import Testing
     #expect(button("file.view")?.accessibilityLabel() == "F3, View", "other keys go nowhere")
 }
 
-/// A server's row shows a root panel there: its SFTP mark in root's orange, saying so, at rest and under the mouse; a
+/// A server's row shows a root panel there: its SFTP mark in root's orange, saying so, on the row and on its card; a
 /// user's panel keeps green.
 @MainActor @Test func aRootSessionIsOrangeInTheSidebar() throws {
     let t = SFTPTarget(host: "me@web.invalid")
     func sftp(_ sessions: [SFTPTarget]) throws -> [NSButton] {
         let row = ServerRow(target: t, title: "web", sessions: sessions.map { ServerSession(id: UUID(), kind: .sftp, target: $0, dir: "/") })
         let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
-        return view.arrangedSubviews.filter { $0 is ServerChips || $0 is ServerToolbar }.flatMap { ($0 as! NSStackView).arrangedSubviews }
-            .compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("sftp ") == true }
+        return ((view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.compactMap { $0 as? NSButton } ?? [])
+            .filter { $0.identifier?.rawValue.hasPrefix("sftp ") == true } + serverCardButtons(row).filter { $0.accessibilityLabel() == "SFTP" }
     }
     let root = try sftp([t.asRoot()])
     #expect(root.count == 2 && root.allSatisfy { $0.contentTintColor == Palette.root })
