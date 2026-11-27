@@ -1129,7 +1129,16 @@ extension SFTPClient {
     }
 
     /// The server's file as it is now, its first `max` bytes at most (it follows a symlink): a Tools list's file.
+    /// A file only: opening a FIFO waits for a writer inside the server's sftp-server, and the session with it — for good.
     public func read(_ remote: String, max: Int, sizeHint: Int64 = 0) throws -> Data {
+        guard try stat(remote).kind == .file else {   // a refusal (code): a Tools list names its path, tool and server
+            throw SFTPError(message: "“\((remote as NSString).lastPathComponent)” isn't a regular file", code: Self.FAILURE)
+        }
+        return try readOpened(remote, max: max, sizeHint: sizeHint)
+    }
+
+    /// `read` for a file a look just told to be one (a save's own check): no second look.
+    private func readOpened(_ remote: String, max: Int, sizeHint: Int64) throws -> Data {
         let r = try openRead(remote, sizeHint: sizeHint)
         defer { r.close() }
         var out = Data()
@@ -1149,7 +1158,7 @@ extension SFTPClient {
     }
 
     /// The server's file as it is now, whole (it follows a symlink): small ones only.
-    private func contents(_ remote: String, size: Int64) throws -> Data { try read(remote, max: .max, sizeHint: size) }
+    private func contents(_ remote: String, size: Int64) throws -> Data { try readOpened(remote, max: .max, sizeHint: size) }
 
     /// Where a symlink leads (`realpath`; nil: it can't be followed) and what's there (`stat`; nil: nothing), asked
     /// together: one wait.
