@@ -283,6 +283,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         }
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.sortDescriptors = []
+        table.setAccessibilityLabel(source.title)   // VoiceOver: "Services", not just its headers (D-151)
         (table.dataSource, table.delegate) = (self, self)
         if let o = order { table.sortDescriptors = [NSSortDescriptor(key: "\(o.column)", ascending: o.ascending)] }   // its header shows the order
         reloadTable()
@@ -302,6 +303,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         b.columns.forEach(table.addTableColumn)
         table.columnAutoresizingStyle = b.style
         table.sortDescriptors = b.sort
+        table.setAccessibilityLabel(nil)
         (table.dataSource, table.delegate) = (b.source, b.delegate)
         (self.table, before) = (nil, nil)
     }
@@ -570,16 +572,19 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         cell.textField?.font = font
         cell.textField?.setAccessibilityLabel(first && isMarked ? "marked" : nil)
         if case .cell(let k) = col.field, let tip = it.tips[k] { cell.toolTip = tip } else { cell.toolTip = words.isEmpty ? nil : words }   // the column's `tip`: shown, never copied
-        if col.state, let mark = it.busy ? (Symbol.pending, NSColor.secondaryLabelColor, "busy") : it.state.map({ ($0.symbol, $0.color, "\($0)") }) {
+        if col.state, let mark = it.busy ? (Symbol.pending, NSColor.secondaryLabelColor, "busy") : it.state.map({ ($0.symbol, $0.color, $0.spoken) }) {
             let s = NSMutableAttributedString(attributedString: mark.0.text(mark.1, font: font, label: mark.2))
             s.append(NSAttributedString(string: " " + words, attributes: [.font: font, .foregroundColor: cell.color]))
             let one = NSMutableParagraphStyle()
             one.lineBreakMode = .byTruncatingTail
             s.addAttribute(.paragraphStyle, value: one, range: NSRange(location: 0, length: s.length))
             cell.text = s
+            // The dot is an attachment: said as its state, not "attachment" — once, if the words start with it (D-151).
+            cell.textField?.cell?.setAccessibilityValue(words.hasPrefix(mark.2) ? words : "\(mark.2), \(words)")
         } else {
             cell.text = nil
             cell.textField?.stringValue = words
+            cell.textField?.cell?.setAccessibilityValue(nil)
         }
         return cell
     }

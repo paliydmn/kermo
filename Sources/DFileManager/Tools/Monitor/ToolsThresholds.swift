@@ -41,10 +41,26 @@ extension ToolRunner {
         monitor.changed()
     }
 
+    /// A warning past the critical level (below it, for a `below` alert): it could never come first.
+    nonisolated static func outOfOrder(warn: Double?, crit: Double?, below: Bool) -> Bool {
+        guard let warn, let crit else { return false }
+        return below ? warn < crit : warn > crit
+    }
+
+    /// A field's number: "85.5" or "85,5" (a decimal comma, one, with no point); nil: not a number; .some(nil): empty.
+    nonisolated static func number(_ s: String) -> Double?? {
+        let text = s.trimmingCharacters(in: .whitespaces)
+        if text.isEmpty { return .some(nil) }
+        if text.contains(/^-?\d+,\d{3}$/) { return nil }   // "1,000": a thousand or one? neither, till it's clear
+        let comma = text.filter { $0 == "," }.count == 1 && !text.contains(".")
+        return Double(comma ? text.replacingOccurrences(of: ",", with: ".") : text).flatMap { $0.isFinite ? .some($0) : nil }
+    }
+
     private func thresholdsSheet(_ tools: [LoadedTool], _ start: [Edit], server: (id: String, title: String)?, window: NSWindow) async -> [Edit]? {
         let alert = AppDelegate.alert("Thresholds", info: "", ["Done", "Cancel"])
         var edits = start, scope: String? = nil, kept: [AnyObject] = []
-        var rows: [(index: (String?) -> Int?, warn: NSTextField?, crit: NSTextField?, notify: NSButton)] = []
+        typealias Row = (index: (String?) -> Int?, warn: NSTextField?, crit: NSTextField?, notify: NSButton, alert: ToolAlert, title: String)
+        var rows: [Row] = []
         let grid = NSGridView(numberOfColumns: 5, rows: 0)
         (grid.rowSpacing, grid.columnSpacing) = (6, 10)
         func small(_ s: String, bold: Bool = false) -> NSTextField {
@@ -78,7 +94,7 @@ extension ToolRunner {
                 let notify = NSButton(checkboxWithTitle: "", target: nil, action: nil)
                 notify.setAccessibilityLabel("Notify of \(m?.title ?? key)")
                 grid.addRow(with: [small((m?.title ?? key) + (a.below == true ? " (below)" : "")), cell(warn), cell(crit), small(held.joined(separator: " / ")), notify])
-                rows.append(({ s in edits.firstIndex { $0.tool == p.id && $0.alert == key && $0.scope == s } }, warn, crit, notify))
+                rows.append(({ s in edits.firstIndex { $0.tool == p.id && $0.alert == key && $0.scope == s } }, warn, crit, notify, a, m?.title ?? key))
             }
             if let down = p.watch?.down {
                 grid.addRow(with: [small("Not answering"), small("—"), small("\(down) checks"), small("every \(Int(p.watch?.every ?? 60)) s"), NSView()])
@@ -89,37 +105,47 @@ extension ToolRunner {
         let done = alert.buttons[0]
         func number(_ f: NSTextField?) -> Double?? {   // nil: not a number; .some(nil): empty
             guard let f else { return .some(nil) }
-            let text = f.stringValue.trimmingCharacters(in: .whitespaces)
-            return text.isEmpty ? .some(nil) : Double(text).map { .some($0) }
+            return Self.number(f.stringValue)
         }
-        // The fields into `edits` for this scope; Done only while each is a number or empty.
+        func explain() {
+            note.stringValue = scope == nil ? "From the tools; a value here is for every server." : "Only on \(server?.title ?? ""): a value here wins over all servers'. Notify unticked: it still shows, with no notification."
+            note.textColor = .secondaryLabelColor
+        }
+        // What an empty field of this scope leaves it to: on a server, all servers' (as set here), else the tool's.
+        func under(_ r: Row) -> (warn: Double?, crit: Double?) {
+            let all = scope == nil ? nil : r.index(nil).map { edits[$0].mine }
+            return (all?.warn ?? r.alert.warn, all?.crit ?? r.alert.crit)
+        }
+        // The fields into `edits` for this scope; Done only while each is a number or empty, and warning comes before critical.
         func store() {
-            var ok = true
+            var ok = true, wrong: String?
             for r in rows {
                 guard let i = r.index(scope) else { continue }
                 let w = number(r.warn), c = number(r.crit)
                 ok = ok && w != nil && c != nil
                 edits[i].mine = ToolServers.Threshold(warn: w ?? nil, crit: c ?? nil)
                 if scope != nil { edits[i].notify = r.notify.state == .on }
+                let u = under(r)
+                if wrong == nil, Self.outOfOrder(warn: (w ?? nil) ?? u.warn, crit: (c ?? nil) ?? u.crit, below: r.alert.below == true) {
+                    wrong = "\(r.title): the warning is \(r.alert.below == true ? "below" : "above") the critical level — it would never come first."
+                }
             }
-            done.isEnabled = ok
+            if let wrong { (note.stringValue, note.textColor) = (wrong, .systemRed) } else { explain() }
+            done.isEnabled = ok && wrong == nil
         }
         // This scope's values; in grey, what an empty field leaves it to: on a server, all servers' (as set here), else the tool's.
         func load() {
             for r in rows {
                 guard let i = r.index(scope) else { continue }
-                let e = edits[i], tool = tools.first { $0.preset.id == e.tool }?.preset
-                let preset = tool?.alerts?.first { ($0.id ?? $0.metric) == e.alert }
-                let all = scope == nil ? nil : r.index(nil).map { edits[$0].mine }
-                for (f, mine, under) in [(r.warn, e.mine.warn, all?.warn ?? preset?.warn), (r.crit, e.mine.crit, all?.crit ?? preset?.crit)] {
+                let e = edits[i], u = under(r)
+                for (f, mine, under) in [(r.warn, e.mine.warn, u.warn), (r.crit, e.mine.crit, u.crit)] {
                     f?.stringValue = mine.map { ToolValue.number($0).text } ?? ""
                     f?.placeholderString = under.map { ToolValue.number($0).text }
                 }
                 r.notify.state = e.notify ? .on : .off
             }
             grid.column(at: 4).isHidden = scope == nil
-            note.stringValue = scope == nil ? "From the tools; a value here is for every server." : "Only on \(server?.title ?? ""): a value here wins over all servers'. Notify unticked: it still shows, with no notification."
-            done.isEnabled = true
+            store()   // this scope's order said at once: Done never takes what the last look would drop
         }
         for r in rows {
             for f in [r.warn, r.crit].compactMap({ $0 }) {

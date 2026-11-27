@@ -78,6 +78,8 @@ import Testing
     #expect(p.list?.shown.map(\.title) == ["worker", "nginx", "cron"], "failed, then needing a look, then as read")
     #expect(cell(p, 0, 0) == "worker" && cell(p, 1, 0).hasSuffix(" failed") && cell(p, 2, 0) == "enabled")
     #expect(cell(p, 1, 0).hasPrefix("\u{FFFC}"), "a mark — a shape — before the state")
+    let state = p.list?.tableView(p.table, viewFor: p.table.tableColumns[1], row: 0) as? PanelCell
+    #expect(state?.textField?.accessibilityValue() as? String == "failed" && p.table.accessibilityLabel() == "Services", "VoiceOver: its state, not \"attachment\" (D-151)")
     #expect(p.list?.headerView.isHidden == false && p.list?.headerView.isDescendant(of: p.view) == true)
     #expect(p.statusText == "3 rows" && p.statusChipWords.isEmpty, "SSH only while a connection is up")
     #expect(p.headerText == "deploy@web-01.invalid › Services" && p.pathBar.crumbs == [PathBar.Crumb(title: "Services", path: nil)])
@@ -87,7 +89,7 @@ import Testing
     p.navigate(to: NSTemporaryDirectory())   // elsewhere: the files' columns back, once the folder's listing lands
     #expect(p.list != nil)
     await until { p.list == nil }
-    #expect(p.table.tableColumns.first?.title == "Name" && p.remoteTabs.isEmpty && p.server == nil)
+    #expect(p.table.tableColumns.first?.title == "Name" && p.remoteTabs.isEmpty && p.server == nil && p.table.accessibilityLabel() == nil)
 }
 
 /// A header click sorts by that column, and again the other way; the cursor stays on its row.

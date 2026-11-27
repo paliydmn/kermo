@@ -16,6 +16,8 @@ private func tokens(_ text: String, _ lang: Syntax.Language) -> [String: Syntax.
     #expect(t["${#arr}"] == .variable)          // ${#…} is length, not a comment
     #expect(t["if"] == .keyword && t["fi"] == .keyword)
     #expect(t["1"] == .number)
+    let w = tokens("HOST=web-01 ls file-2.txt --port=8080 -n -5", .shell)
+    #expect(w["01"] == nil && w["-01"] == nil && w["2"] == nil && w["8080"] == .number && w["-5"] == .number)   // D-193
 }
 
 @Test func commentWithQuoteIsNotAString() {

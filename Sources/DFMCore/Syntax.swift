@@ -44,6 +44,8 @@ public enum Syntax {
     private static let dq = #""(?:[^"\\\n]|\\.)*""#
     private static let sq = #"'(?:[^'\\\n]|\\.)*'"#
     private static let num = #"(?<![\w.])-?(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![\w.])"#
+    /// Shell's: a "-" in a word is part of it (`web-01`, `file-2.txt`), not a minus (D-193).
+    private static let shellNum = #"(?<![\w.-])-?(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![\w.])"#
 
     // Block comments and long strings run to the end of the text when unclosed (as in editors): a pattern that can
     // fail after scanning to the end gets retried from every later opener, O(n²) on a crafted file (S8).
@@ -52,7 +54,7 @@ public enum Syntax {
             r(#"(?<![\w$\{])#.*$"#, .comment), r(dq, .string), r(#"'[^']*'"#, .string),
             r(#"\$\{[^}\n]*\}|\$[A-Za-z_]\w*|\$[0-9@#?$!*-]"#, .variable),
             r(#"\b(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|in|function|return|local|export|readonly|declare|set|unset|shift|exit|source|alias|eval|exec|trap|break|continue)\b"#, .keyword),
-            r(num, .number),
+            r(shellNum, .number),
         ],
         .python: [
             r(#"#.*$"#, .comment), r(#"(?s)\"\"\"[\s\S]*?(?:\"\"\"|\z)|'''[\s\S]*?(?:'''|\z)"#, .string), r(dq, .string), r(sq, .string),

@@ -1440,7 +1440,27 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// A file renamed on this Mac (its tab, a panel's ⇧F6): its tab follows.
-    static func renamed(_ path: String, to dst: String) async { await following(path)?.moved(to: URL(fileURLWithPath: dst)) }
+    static func renamed(_ path: String, to dst: String) async { await renamed([(path, dst)]) }
+
+    /// Files or folders renamed or moved on this Mac (⇧F6, F6, ⌘Z of either): the tabs of each and of what's inside a
+    /// folder follow, so ⌘S doesn't make the old one again (D-199). All looked up first: a swap's second pair would find
+    /// the first's tab; all moved before the one commit, so no ⌘S or second call finds some moved and some not.
+    /// `checked`: a pair that may not have moved (F6's Replace, a merge, a move cut short) — a tab follows only where its
+    /// new path is there and its old one isn't.
+    static func renamed(_ pairs: [(from: String, to: String)], checked: Bool = false) async {
+        let tabs = open.filter { !$0.fixedPlace && $0.server == nil && $0.url != nil }
+        guard !tabs.isEmpty, !pairs.isEmpty else { return }
+        let froms = pairs.map { (from: URL(fileURLWithPath: $0.from).standardizedFileURL.path, to: $0.to) }
+        let moves = tabs.compactMap { e -> (Editor, URL)? in
+            guard let p = e.url?.standardizedFileURL.path,
+                  let (f, to) = froms.first(where: { p == $0.from || p.hasPrefix($0.from + "/") }) else { return nil }
+            let new = to + p.dropFirst(f.count)
+            if checked, FileManager.default.fileExists(atPath: p) || !FileManager.default.fileExists(atPath: new) { return nil }
+            return (e, URL(fileURLWithPath: new))
+        }
+        moves.forEach { $0.0.relocate($0.1) }
+        await moves.first?.0.host?.commit(durable: true)   // one host: the editor's window, all its tabs
+    }
 
     /// Rename… of its tab (a double-click, ⇧F6): an Untitled's name; its file on this Mac or on its server — never over
     /// anything there. Nothing of it changes unless the file's renamed.
@@ -1494,10 +1514,15 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// Its file is `new` on this Mac now: the tab, title and language follow, and the session names it at once — a
     /// draft goes with it.
     func moved(to new: URL) async {
+        relocate(new)
+        await host?.commit(durable: true)
+    }
+
+    /// Its file is `new` now: the tab, title and language — the session not yet.
+    private func relocate(_ new: URL) {
         url = new
         relanguage()
         showState()
-        await host?.commit(durable: true)
     }
 
     /// Its file is at `path` on its server now: its saves go there — the same state and copy folder (the old `onClose`

@@ -656,6 +656,27 @@ extension EditorWindowTests {
         #expect(h.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
         await until("renamed by ↩") { eb.url?.lastPathComponent == "notes.ini" }
         #expect(h.renameField == nil && read(dir + "/notes.ini") == "x\ny\n" && eb.language == .ini)
+
+        // D-199: F6 of the file, then a rename of the folder it's in — the tab follows both, ⌘S makes no duplicate.
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: dir + "/f", withIntermediateDirectories: true)
+        try fm.moveItem(atPath: dir + "/notes.ini", toPath: dir + "/f/notes.ini")
+        await Editor.renamed([(from: dir + "/notes.ini", to: dir + "/f/notes.ini")])
+        try fm.moveItem(atPath: dir + "/f", toPath: dir + "/g")
+        await Editor.renamed([(from: dir + "/f", to: dir + "/g"), (from: dir + "/g", to: dir + "/f")])   // a swap's second pair finds nothing
+        #expect(eb.url?.path == dir + "/g/notes.ini" && h.tabTitle(eb) == "notes.ini")
+        type(eb, "z\n")
+        #expect(await eb.save() && read(dir + "/g/notes.ini") == "x\ny\nz\n" && read(dir + "/notes.ini") == nil && read(dir + "/f/notes.ini") == nil)
+        // F6's pairs that may not have moved (a Replace, a merge, cut short): followed only where it did.
+        await Editor.renamed([(from: dir + "/g/notes.ini", to: dir + "/h/notes.ini")], checked: true)
+        #expect(eb.url?.path == dir + "/g/notes.ini", "nothing at the new path: stays")
+        try fm.createDirectory(atPath: dir + "/h", withIntermediateDirectories: true)
+        try fm.copyItem(atPath: dir + "/g/notes.ini", toPath: dir + "/h/notes.ini")
+        await Editor.renamed([(from: dir + "/g/notes.ini", to: dir + "/h/notes.ini")], checked: true)
+        #expect(eb.url?.path == dir + "/g/notes.ini", "still at the old one too: stays")
+        try fm.removeItem(atPath: dir + "/g/notes.ini")
+        await Editor.renamed([(from: dir + "/g/notes.ini", to: dir + "/h/notes.ini")], checked: true)
+        #expect(eb.url?.path == dir + "/h/notes.ini", "moved: follows")
     }
 
     /// An Untitled takes a name and no file: its language by it, Save As offers it (`name`), the session keeps it and a

@@ -2269,3 +2269,13 @@ extension ServerLockTests {
         app.tools.monitor.watch(t.loaded, on: .local(), false)
     }
 }
+
+/// D-167: the Thresholds sheet takes a decimal comma, and a warning past the critical level stops Done.
+@Test func thresholdFieldsTakeACommaAndKeepTheirOrder() {
+    #expect(ToolRunner.number("85,5") == .some(85.5) && ToolRunner.number(" 85.5 ") == .some(85.5) && ToolRunner.number("") == .some(nil))
+    #expect(ToolRunner.number("1,000.5") == nil && ToolRunner.number("8,5,1") == nil && ToolRunner.number("x") == nil)
+    #expect(ToolRunner.number("1,000") == nil && ToolRunner.number("nan") == nil && ToolRunner.number("inf") == nil && ToolRunner.number("1,25") == .some(1.25))
+    #expect(ToolRunner.outOfOrder(warn: 95, crit: 90, below: false) && !ToolRunner.outOfOrder(warn: 80, crit: 90, below: false))
+    #expect(ToolRunner.outOfOrder(warn: 5, crit: 10, below: true) && !ToolRunner.outOfOrder(warn: 20, crit: 10, below: true))
+    #expect(!ToolRunner.outOfOrder(warn: nil, crit: 90, below: false) && !ToolRunner.outOfOrder(warn: 90, crit: 90, below: false))
+}

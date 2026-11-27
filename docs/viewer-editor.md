@@ -171,7 +171,7 @@ A double-click on a tab's name, **Rename…** in its menu, or ⇧F6 in the edito
 - **A server's file** is renamed as the panel's ⇧F6 renames it. A locked server asks for Touch ID before the field. On a production server a question with its strip names the old and the new name, ↩ answers **Cancel**, and the production log has a line. A tab not connected yet needs the connection, not its text. Its next ⌘S goes to the new name. Its [file history](server-files.md#file-history) stays under the old name.
 - Not while the file saves or uploads, not to a name another tab has open, and not a tool's file (Kermo reads it where it is).
 - **An Untitled** takes just a name, no file. Its colors follow the name (`deploy.yaml` is YAML), and ⌘S offers it in the save panel.
-- ⇧F6 in a panel on a file open in a tab takes the tab along, on this Mac and on a server.
+- ⇧F6 in a panel on a file open in a tab takes the tab along, on this Mac and on a server. On this Mac so do F6 (Move) of the file and a rename or move of a folder it's in, and ⌘Z of either; a rename made outside Kermo (Finder, `mv`) isn't followed: ⌘S then writes the old path again.
 
 ### Untitled and Save As
 

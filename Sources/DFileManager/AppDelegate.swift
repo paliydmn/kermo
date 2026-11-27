@@ -189,7 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setUpSidebar()
         setUpSearch()
         ToolsWindow.restore(self, session.tools ?? [])   // behind the main window, nothing connected for them
-        window.makeKeyAndOrderFront(nil)
+        // Open at Login with something watched: straight to the menu bar, no window (D-168); its menu brings the window.
+        let atLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        let quiet = atLogin && !tools.monitor.watched.isEmpty
+        if !quiet { window.makeKeyAndOrderFront(nil) }
         window.makeFirstResponder(active.table)
         EditorHost.restore(drafts ?? Result { try DraftStore.open(Config.drafts) }, onServer: remoteEditing)   // its tabs and drafts; the window, if it was up
         updatePanelStates()
@@ -199,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             tunnels.startSaved(savedServers)
         }
         startUpdateChecks()
-        NSApp.activate()
+        if quiet { windowClosed() } else { NSApp.activate() }   // the menu bar alone, unless the editor or Tools came back up
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
             let handled = MainActor.assumeIsolated { () -> Bool in
