@@ -115,7 +115,8 @@ extension AppDelegate {
         guard let (panel, here) = gitHere() else { return }
         Task { [unowned self] in
             // The whole work tree, not the panel's folder: that's what a commit takes.
-            guard case .success(let found) = await panel.busy("Git status…", after: 0.3, { _ in GitStatus.load(here.root) }) else { return }
+            // Each new file, not "dir/": ↩ on a folder would hand `git diff --no-index` a folder (D-052).
+            guard case .success(let found) = await panel.busy("Git status…", after: 0.3, { _ in GitStatus.load(here.root, allUntracked: true) }) else { return }
             guard let st = found else { return panel.flash("Git status didn't finish", error: true) }
             let root = st.root, total = st.changes.count, staged = st.staged
             let amend = !st.detached && (st.upstream == nil || st.ahead > 0)   // not pushed yet, as far as this Mac knows

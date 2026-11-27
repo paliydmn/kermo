@@ -20,6 +20,13 @@ Release:
 - Under the mouse a server row keeps its name and state, and a card beside it shows the name in full, the address, what's open and its tunnels, with **SSH**, **SFTP**, **Tunnels ▸** and **⋯**: the buttons no longer cover the name in a narrow sidebar. → [Servers](docs/servers.md#server-rows-in-the-sidebar)
 
 ### Fixed
+- A file open in the editor and moved with F6, or in a folder renamed or moved, is followed by its tab: ⌘S no longer writes it back at the old place as a duplicate. → [Rename](docs/viewer-editor.md#rename)
+- A tab whose folder is gone no longer takes the previous tab's folder as its own: it goes up to the nearest folder still there.
+- In the commit sheet, ↩ on a new folder no longer shows a git diff error: its files are listed one by one.
+- Shell highlighting no longer colors `01` in `web-01` as a number.
+- **Thresholds…** takes a decimal comma (`85,5`), and a warning past the critical level says so instead of being taken.
+- **Open Kermo at login** with something watched starts in the menu bar, without the main window. → [Tools](docs/tools.md)
+- VoiceOver reads a list's state as its words (not "attachment"), and the list by its name.
 - `servers.json` edited by hand while Kermo runs is no longer written over by Kermo's next change: Kermo reads it again first (and at **Reload Config**), and one with an error — half typed, or an entry that can't be read at launch — isn't saved over until it's fixed. A server's keys Kermo doesn't know — a newer Kermo's, your own — stay in the file. → [Saved servers](docs/configuration.md#saved-servers)
 - A tool made with **Make with AI…** that put its commands in `script` (meant for a file's name) loads: each runs as `command`, and Problems says to rename the field. The tool format now says which is which. → [Tools](docs/tools.md#the-fields-that-work-now)
 - curl's `-w '%{http_code}'` in a tool's command reaches curl as written: `%{…}`, like `${…}`, is no longer a Kermo placeholder anywhere in a tool.

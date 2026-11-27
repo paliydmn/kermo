@@ -196,6 +196,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var statting: String?   // the folder being stat'ed: one stuck on a hung mount doesn't stop the next folder's
     private var reloadScheduled = false
     private var backStack: [String] = []
+    /// The folder `loadTab` asked for, till its listing is back: a failure there is the tab's own (D-238).
+    private var tabLoad: String?
     private var forwardStack: [String] = []
     private var quickLook: QLPreviewPanel?   // while it previews this panel's items
     private var quickLooked: [URL] = []      // what it last loaded
@@ -695,6 +697,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 same = await Blocking.run(.userInitiated) { r.0 == shown && zip(r.0, shown).allSatisfy { $0.name.utf8.elementsEqual($1.name.utf8) } }
             }
             guard let self, gen == loadGen else { return }
+            // A tab switched to (`loadTab`), its folder gone: the rows shown are the tab before's — not taken as this one's (D-238).
+            let tabsOwn = tabLoad == newPath && parked == nil && !all.isEmpty   // from an empty one: home, as a tab with nothing shown
+            tabLoad = nil
             loadedGen = gen
             busyMessage = busyOps.last?.message
             lastLoadSeconds = Date().timeIntervalSince(started)
@@ -770,14 +775,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 statusLabel.stringValue = "\((newPath as NSString).abbreviatingWithTildeInPath): \(error.localizedDescription)"
                 statusError = true
                 if (error as? POSIXError)?.code == .ENOENT { onGone?(newPath) }
-                if newPath == plainFolder && hasParent && history == .none && !all.isEmpty {
+                if (newPath == plainFolder && hasParent && history == .none && !all.isEmpty) || tabsOwn {
                     // The folder shown vanished or became unreadable: up to the nearest one still there — its parent
                     // may be gone too (an unplugged disk: /Volumes).
                     let m = moves
                     Task { [weak self] in
                         let up = await Blocking.run(.userInitiated) { Self.nearestFolder(above: newPath) }
                         guard let self, m == moves else { return }
-                        navigate(to: up)
+                        if tabsOwn { marked.removeAll() }   // the tab before's, kept in its tab already: not this one's
+                        navigate(to: up, history: tabsOwn ? .none : .push)
                     }
                 } else if all.isEmpty && (history == .none || !listedOnce) && parked == nil && newPath != NSHomeDirectory() {
                     // Nothing of the tab shown yet (a restored path gone, a tab's folder, a server's left for it): home.
@@ -2356,6 +2362,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             // Off a parked tab or a list: this tab's own at once — switching again before the listing is back saves it, not that one.
             if parked != nil { (parked, path) = (nil, t.path) }
             if list != nil { leaveList(); path = t.path }
+            tabLoad = t.path
             navigate(to: t.path, select: t.cursor, history: .none, keep: keep)
         }
         updateTabBar()

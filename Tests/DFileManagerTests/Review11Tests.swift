@@ -253,6 +253,44 @@ private func tempDir() -> String {
     #expect(panel.path == d && names(panel).isEmpty, "\(panel.path)")
 }
 
+/// D-238: a tab switched to whose folder is gone doesn't take the tab before's folder as its own: it goes up too.
+@MainActor @Test func aTabWhoseFolderIsGoneGoesUpToOneThatIsThere() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try FileManager.default.createDirectory(atPath: d + "/a", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: d + "/b/sub", withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: d + "/a/f.txt", contents: Data())
+    let panel = PanelViewController(tabs: [d + "/a", d + "/b/sub"], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await until { panel.path == d + "/a" && names(panel) == ["f.txt"] }
+    try FileManager.default.removeItem(atPath: d + "/b/sub")
+    panel.switchTab(by: 1)
+    await until { panel.path == d + "/b" }
+    #expect(panel.path == d + "/b" && names(panel).isEmpty, "\(panel.path)")
+    panel.switchTab(by: 1)
+    await until { panel.path == d + "/a" }
+    #expect(names(panel) == ["f.txt"], "the first tab is as it was")
+}
+
+/// D-238: the nearest folder still there is the tab before's own: the gone tab lands there without that tab's marks.
+@MainActor @Test func aGoneTabLandingInTheTabBeforesFolderTakesNoMarks() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try FileManager.default.createDirectory(atPath: d + "/x/sub", withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: d + "/x/f.txt", contents: Data())
+    let panel = PanelViewController(tabs: [d + "/x", d + "/x/sub"], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await until { panel.path == d + "/x" && names(panel) == ["sub", "f.txt"] }
+    panel.mark(matching: try #require(Mask("*.txt")), true)
+    #expect(panel.markedNames == ["f.txt"])
+    try FileManager.default.removeItem(atPath: d + "/x/sub")
+    panel.switchTab(by: 1)
+    await until { panel.path == d + "/x" && names(panel) == ["f.txt"] }
+    #expect(panel.markedNames.isEmpty && names(panel) == ["f.txt"], "the first tab's marks stay its own \(names(panel)) \(panel.path)")
+}
+
 /// N4: on a server panel a symlink's row says where it points, as on this Mac (tooltip; beside the name if it fits).
 @MainActor @Test func serverLinksShowTheirTarget() async throws {
     let d = tempDir()

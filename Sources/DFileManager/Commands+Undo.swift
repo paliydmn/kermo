@@ -154,9 +154,9 @@ extension AppDelegate {
                         + others.map { ($0 as NSString).lastPathComponent }.joined(separator: "\n")))
                 }
                 updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
-                // ⌘Z of a rename: its tab goes back with it. All looked up first: a swap's second pair would find the first's tab.
+                // ⌘Z of a rename: its tab goes back with it, and the tabs inside a renamed folder.
                 // ponytail: not held while renaming, as ⇧F6 holds it — a ⌘S in that instant makes the old name again.
-                for (tab, r) in zip(renames.map { Editor.following($0.from) }, renames) { await tab?.moved(to: URL(fileURLWithPath: r.to)) }
+                await Editor.renamed(renames)
             } catch {
                 fill(record, [], [])
                 showError(JobErrorMessage("Can't undo \(title.lowercased()): \(error.localizedDescription)"))
@@ -176,6 +176,12 @@ extension AppDelegate {
         }
         if job.from == .local, job.kind != .copy { forgetGone(job.sources) }   // F6, F8, Trash
         let pairs = job.results.map { (from: $0.src, to: $0.dst) }   // empty for a server: no undo there
+        if job.kind == .move, job.from == .local, job.to == .local, let dir = job.destDir {   // F6: its tabs follow
+            // A Replace, a merge or a move cut short leaves no pair: where each source would be, if it moved.
+            // ponytail: at the job's end — a ⌘S meanwhile writes an item already moved at its old path; follow per item if that shows.
+            let done = Set(pairs.map(\.from)), rest = job.sources.filter { !done.contains($0) }
+            Task { await Editor.renamed(pairs + rest.map { ($0, (dir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent)) }, checked: true) }
+        }
         // An undo/redo's own job: performMoves registered what comes next already.
         if let i = replayJobs.firstIndex(where: { $0 === job }) { replayJobs.remove(at: i); return updateTrashLog(after: pairs) }
         switch job.kind {

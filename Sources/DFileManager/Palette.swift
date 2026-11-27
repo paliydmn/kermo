@@ -89,6 +89,8 @@ enum StateMark {
 
     var symbol: Symbol { switch self { case .on, .off: .dot; case .failed: .diamond; case .attention: .ring } }
     var color: NSColor { switch self { case .on: Palette.ok; case .failed: Palette.fail; case .attention: Palette.warn; case .off: .tertiaryLabelColor } }
+    /// What VoiceOver says for the shape.
+    var spoken: String { switch self { case .on: "on"; case .failed: "failed"; case .attention: "needs a look"; case .off: "off" } }
     func image(_ label: String, size: CGFloat = 8) -> NSImage { symbol.image(label, color: color, size: size) }
     func text(_ label: String, font: NSFont) -> NSAttributedString { symbol.text(color, font: font, label: label) }
 }
