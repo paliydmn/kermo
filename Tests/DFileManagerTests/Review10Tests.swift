@@ -125,13 +125,11 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
 @MainActor @Test func serverActionsArePills() throws {
     let t = SFTPTarget(host: "root@web")
     let row = ServerRow(target: t, title: "web", sessions: [ServerSession(id: UUID(), kind: .sftp, target: t, dir: "/")])
-    let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
-    let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
-    let buttons = toolbar.arrangedSubviews.compactMap { $0 as? PillButton }
-    #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"])
-    let plain = NSButton(image: try #require(buttons[1].image), target: nil, action: nil)
-    plain.isBordered = false
-    #expect(buttons[1].intrinsicContentSize.width == max(plain.intrinsicContentSize.width + 4, 18), "a few pt wider, no bezel; narrow (D-148)")
+    let buttons = serverCardButtons(row).compactMap { $0 as? PillButton }
+    #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Tunnels", "Server menu"])
+    let plain = NSButton(title: "SFTP", image: try #require(buttons[1].image), target: nil, action: nil)
+    (plain.isBordered, plain.imagePosition, plain.imageHugsTitle, plain.font) = (false, .imageLeading, true, buttons[1].font)
+    #expect(buttons[1].intrinsicContentSize.width == plain.intrinsicContentSize.width + 8, "a few pt wider, no bezel")
 }
 
 // MARK: - I10: systemctl in the F2 menu, on a server panel only

@@ -17,7 +17,7 @@ Release:
 ### Changed
 - The shell command is now **`kermo`** (**Kermo ▸ Install “kermo” Command**): macOS 27 has its own `fm`, which Kermo's old link hid. If you installed `fm`, choose that menu item once: it removes the old `fm` link when it points into Kermo, and no other. → [The `kermo` command](docs/commands.md#the-kermo-command)
 - In ⇧⌘P a server's name typed from its start comes first and is chosen, not a command found by a few of its letters. → [Search](docs/window.md#search)
-- A server row's buttons under the mouse are narrower, so its name keeps more of its start and a double-click on it opens the files. → [Servers](docs/servers.md)
+- Under the mouse a server row keeps its name and state, and a card beside it shows the name in full, the address, what's open and its tunnels, with **SSH**, **SFTP**, **Tunnels ▸** and **⋯**: the buttons no longer cover the name in a narrow sidebar. → [Servers](docs/servers.md#server-rows-in-the-sidebar)
 
 ### Fixed
 - A Tools list whose file on the server is a FIFO no longer hangs for good: it isn't opened, and the list says so.

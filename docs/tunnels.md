@@ -49,7 +49,7 @@ The tunnel takes the same port on this Mac when it's free, else the next free on
 
 **In a panel:** a server's [overview](servers.md#the-server-as-a-place) has a **Tunnels** row: its tunnels as a list (Name · State · Here · Goes to), saved and temporary ones, from this Mac — nothing is asked of the server. ↩ turns one on or off, ⌘C copies its address, F4 edits it, F8 deletes it (asking), a temporary one's menu has Save; **＋ New Tunnel…** is over the columns. It updates as tunnels turn on and off.
 
-**Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen; its tooltip marks them "temporary"), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
+**Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen; its card marks them "temporary"), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
 
 ## How it works
 
@@ -67,7 +67,7 @@ Each tunnel shows a ●:
 
 The reason is in the tooltip and, once per new reason, in the status line: "Nothing listens on localhost:5432 (as seen from db1)", "db1 forbids port forwarding (AllowTcpForwarding / PermitOpen)", "db1 can't resolve db.internal". It comes from ssh's own log of that connection (`/tmp/dfm-ssh-<uid>/log-<host>_<port>`, owner-only, gone with the connection).
 
-The sidebar shows a green `⇄` on a server while its tunnels listen (`⇄ 2` for two), red when one failed. Under the mouse it opens the server's tunnels.
+The sidebar shows a green `⇄` on a server while its tunnels listen (`⇄ 2` for two), red when one failed. **Tunnels ▸** on the server's card under the mouse opens its tunnels.
 
 ## Turn off and quit
 

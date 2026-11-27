@@ -779,6 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Hidden while it has the keys, the outline resigns to the window and they go nowhere: back to the panel first.
     private func collapseSidebar(_ hide: Bool, animated: Bool) {
         if hide, sidebar.hasFocus { sidebar.onLeave?() }
+        if hide { sidebar.card.hide() }
         guard animated else { sidebarItem.isCollapsed = hide; return }
         sidebarAnimating = true
         NSAnimationContext.runAnimationGroup { _ in sidebarItem.animator().isCollapsed = hide } completionHandler: { [self] in
@@ -1137,7 +1138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         for st in tunnels.temporaries() {   // Forward Port's: on any server, an unsaved one's row stays while they do
             let key = ServerRow.key(st.server.target)
-            servers.tunnels[key, default: []].append(st.tunnel.title + " (temporary)")   // the row's tooltip
+            servers.tunnels[key, default: []].append(st.tunnel.title + " (temporary)")   // the row's card
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }

@@ -112,8 +112,7 @@ extension ServerLockTests {
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
     let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
     #expect(chips.arrangedSubviews.map { $0.accessibilityLabel() } == ["1 SFTP panel open"])
-    let actions = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView).arrangedSubviews.compactMap { $0 as? NSButton }
-    #expect(actions.first { $0.accessibilityLabel() == "SSH" }?.contentTintColor == .secondaryLabelColor, "as on a server with nothing open")
+    #expect(serverCardButtons(row).first { $0.accessibilityLabel() == "SSH" }?.contentTintColor == .secondaryLabelColor, "as on a server with nothing open")
 }
 
 /// R27: a panel leaving the server for a local folder ends its session there (the sidebar's SFTP badge goes with it).
@@ -293,9 +292,9 @@ extension ServerLockTests {
     #expect(w.title == "mine.conf" && w.representedURL?.lastPathComponent == "mine.conf")
 }
 
-/// A server row at rest says what's open — SSH, SFTP and tunnels listening in green with a count from 2 (tunnels red
-/// when one failed) — and under the mouse offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯ instead.
-/// Production is its chip and its icon's color, not red; a locked server's icon says so; the tooltip says all of it.
+/// A server row says what's open — SSH, SFTP and tunnels listening in green with a count from 2 (tunnels red when one
+/// failed) — at rest and under the mouse; its card offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯.
+/// Production is its chip and its icon's color, not red; a locked server's icon says so; the card says all of it.
 @MainActor @Test func serverRowSaysItsStateAndOffersItsActions() throws {
     var s = SavedServer(address: "root@db:2222")!
     s.prod = true
@@ -315,30 +314,35 @@ extension ServerLockTests {
     #expect(!chip.shown, "whole or not at all")
     #expect((view.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, locked")
     let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
-    let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
+    #expect(!view.arrangedSubviews.contains { $0 is ServerToolbar }, "its actions are on its card")
     let shown = chips.arrangedSubviews.compactMap { $0 as? NSButton }
     #expect(shown.map { $0.accessibilityLabel() } == ["2 SSH sessions open", "1 SFTP panel open", "2 tunnels listening, one failed"])
     #expect(shown.map(\.title) == ["2", "", "2"] && shown.map(\.contentTintColor) == [.systemGreen, .systemGreen, .systemRed])
-    #expect(toolbar.arrangedSubviews.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Tunnels", "Server menu"])
-    #expect(toolbar.isHidden && !chips.isHidden, "at rest: the state")
-    #expect(view.toolTip == """
+    #expect(serverCardButtons(row).map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Tunnels", "Server menu"])
+    let note = """
         root@db:2222 · locked · production · SSH 2, SFTP 1 open
         Tunnels listening: Postgres, Redis
         Redis: db can't resolve cache
         Click: its session · ⋯ or right-click: everything else
-        """)
+        """
+    #expect(view.toolTip == nil && view.accessibilityHelp() == note, "no tooltip over the card")
+    let card = SidebarController().serverCard(row)
+    #expect(texts(card) == ["db"] + note.split(separator: "\n").map(String.init), "the card: its name in full, then the note")
+    #expect(card.arrangedSubviews.compactMap { $0 as? NSTextField }.map(\.textColor)
+            == [.secondaryLabelColor, Palette.ok, Palette.fail, .tertiaryLabelColor], "listening green, a failure red")
     let rowView = HoverRowView()
     rowView.addSubview(view)
     rowView.isSelected = true
-    #expect(toolbar.isHidden && !chips.isHidden, "selected — the current server: still its state")
     func mouse(_ type: NSEvent.EventType) -> NSEvent {
         NSEvent.enterExitEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
                                eventNumber: 0, trackingNumber: 0, userData: nil)!
     }
+    var told = 0
+    rowView.onHover = { told += 1 }
     rowView.mouseEntered(with: mouse(.mouseEntered))
-    #expect(!toolbar.isHidden && chips.isHidden, "under the mouse: the actions")
+    #expect(!chips.isHidden && name.lineBreakMode == .byTruncatingMiddle && told == 1, "under the mouse: still its name and state")
     rowView.mouseExited(with: mouse(.mouseExited))
-    #expect(toolbar.isHidden && !chips.isHidden)
+    #expect(!chips.isHidden && told == 2)
 
     let plain = ServerRow(target: SFTPTarget(host: "web"), title: "web", status: .failed("Connection refused"))
     let quiet = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(plain))) as? NSStackView)
@@ -346,28 +350,37 @@ extension ServerLockTests {
     #expect(failed.count == 1 && (failed.first as? NSImageView)?.image?.accessibilityDescription == "Its last connection failed",
             "nothing open: only the failure, a red ◆")
     #expect(failed.first?.toolTip == "Last connection failed: Connection refused")
-    #expect((quiet.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)?.arrangedSubviews.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"],
-            "no tunnels: no Tunnels button")
+    #expect(serverCardButtons(plain).map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Tunnels", "Server menu"], "no tunnels: Tunnels for a new one")
     #expect((quiet.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server")
-    #expect(quiet.toolTip?.hasPrefix("web\nConnection refused\n") == true)
+    #expect(quiet.accessibilityHelp()?.hasPrefix("web\nConnection refused\n") == true)
+    #expect(SidebarController().serverCard(plain).arrangedSubviews.compactMap { $0 as? NSTextField }.map(\.textColor).prefix(2)
+            == [.secondaryLabelColor, Palette.fail])
 
-    // Tunnels listening, none failed: green, as what's open. The actions take clicks around their icons, as tall as a
-    // row lets them, narrow at the row's end: a 150-pt row keeps "db-main-01" over 60 pt under the mouse (D-148).
+    // Tunnels listening, none failed: green, as what's open. The card's actions take clicks 22 pt tall at least.
     let up = ServerRow(target: s.target, saved: s, title: "db", tunnels: ["Postgres"])
     let upView = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(up))) as? NSStackView)
     #expect((upView.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.map { ($0 as? NSButton)?.contentTintColor } == [.systemGreen])
-    let actions = try #require(upView.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
-    actions.isHidden = false
-    for (height, side) in [(24.0, 22.0), (18, 18)] {
-        upView.frame = NSRect(x: 0, y: 0, width: 260, height: height)
-        upView.layoutSubtreeIfNeeded()
-        let sizes = actions.arrangedSubviews.map { $0.alignmentRect(forFrame: $0.frame).size }   // the frame takes clicks a bit past it
-        #expect(sizes.allSatisfy { $0.width >= 18 && $0.height == side }, "\(height): \(sizes)")
-    }
-    let long = ServerRow(target: SFTPTarget(host: "db-main-01"), title: "db-main-01")
-    let longView = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(long))) as? NSStackView)
-    longView.arrangedSubviews.forEach { $0.isHidden = $0 is ServerChips }   // under the mouse
-    longView.frame = NSRect(x: 0, y: 0, width: 150, height: 22)
-    longView.layoutSubtreeIfNeeded()
-    #expect((longView.arrangedSubviews.first { $0 is ServerName }?.frame.width ?? 0) > 60)
+    let sizes = serverCardButtons(up).map(\.intrinsicContentSize)
+    #expect(sizes.allSatisfy { $0.width >= 22 && $0.height >= 22 }, "\(sizes)")
+}
+
+/// The card stands right of its row, its top a little above the row's, and stays on the screen.
+@Test func aHoverCardStaysOnTheScreen() {
+    let screen = NSRect(x: 0, y: 0, width: 1000, height: 800), size = NSSize(width: 200, height: 120)
+    #expect(HoverCard.origin(beside: NSRect(x: 0, y: 400, width: 180, height: 24), size: size, in: screen) == NSPoint(x: 184, y: 308))
+    #expect(HoverCard.origin(beside: NSRect(x: 0, y: 10, width: 180, height: 24), size: size, in: screen).y == 0, "a row at the bottom")
+    #expect(HoverCard.origin(beside: NSRect(x: 0, y: 790, width: 180, height: 24), size: size, in: screen).y == 680, "at the top")
+    #expect(HoverCard.origin(beside: NSRect(x: 300, y: 400, width: 600, height: 24), size: size, in: screen).x == 96, "no room right: left of the row")
+    #expect(HoverCard.origin(beside: NSRect(x: 0, y: 400, width: 900, height: 24), size: size, in: screen).x == 800, "nor left: on the screen")
+}
+
+/// A server card's buttons: SSH, SFTP, Tunnels, ⋯ (`serverCard`).
+@MainActor func serverCardButtons(_ row: ServerRow) -> [NSButton] {
+    func all(_ v: NSView) -> [NSButton] { (v as? NSButton).map { [$0] } ?? v.subviews.flatMap(all) }
+    return all(SidebarController().serverCard(row))
+}
+
+/// The card's lines in order: its name, then what it says.
+@MainActor private func texts(_ v: NSView) -> [String] {
+    (v as? NSTextField).map { [$0.stringValue] } ?? v.subviews.flatMap(texts)
 }
