@@ -6,6 +6,31 @@ import NetFS
 import Network
 import Security
 
+/// A server as servers.json has it, with the keys this Kermo doesn't know — a newer Kermo's, one added by hand — written
+/// back as they were: a downgrade or a hand edit loses nothing at the next save (D-118).
+// ponytail: a tunnel's own unknown keys still go (`Tunnel`'s synthesized coding); keep them the same way if one appears.
+struct KeptServer: Codable {
+    var server: SavedServer
+    var unknown: [String: ToolValue]
+
+    init(server: SavedServer, unknown: [String: ToolValue]) { (self.server, self.unknown) = (server, unknown) }
+    init(from d: Decoder) throws {
+        server = try SavedServer(from: d)
+        unknown = try [String: ToolValue](from: d).filter { !SavedServer.knows($0.key) }
+    }
+    func encode(to e: Encoder) throws {
+        try server.encode(to: e)   // as before, byte for byte; the unknown ones beside them (never one of its keys)
+        var c = e.container(keyedBy: Key.self)
+        for (k, v) in unknown { try c.encode(v, forKey: Key(stringValue: k)) }
+    }
+    private struct Key: CodingKey {
+        var stringValue: String
+        init(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { nil }
+    }
+}
+
 /// A server in ~/.config/dfilemanager/servers.json: the sidebar's Saved section.
 struct SavedServer: Codable, Equatable {
     var id = UUID()
@@ -60,6 +85,24 @@ struct SavedServer: Codable, Equatable {
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
         sites = try c.decodeIfPresent([String].self, forKey: .sites) ?? []
     }
+
+    /// servers.json's servers, with what each has that this Kermo doesn't know kept aside (`KeptServer`).
+    @MainActor static func load() -> (value: [SavedServer], problem: String?) {
+        let (kept, problem) = Config.loadEach("servers.json", as: KeptServer.self)
+        if problem != nil { Config.distrust("servers.json") }   // not saved over until it reads whole (its copy: .broken)
+        return (take(kept), problem)
+    }
+    /// These as the servers, their unknown keys kept for the next save.
+    @MainActor static func take(_ kept: [KeptServer]) -> [SavedServer] {
+        unknown = Dictionary(kept.map { ($0.server.id, $0.unknown) }, uniquingKeysWith: { a, _ in a })
+        return kept.map(\.server)
+    }
+    @MainActor static func save(_ all: [SavedServer]) {
+        Config.save("servers.json", all.map { KeptServer(server: $0, unknown: unknown[$0.id] ?? [:]) })
+    }
+    /// The keys of each server (by id) that this Kermo doesn't know, as the file had them.
+    @MainActor private static var unknown: [UUID: [String: ToolValue]] = [:]
+    fileprivate static func knows(_ key: String) -> Bool { CodingKeys(stringValue: key) != nil }
 
     /// A saved server's name for `t`, else its address: what questions and hints call it.
     @MainActor static func name(for t: SFTPTarget) -> String {

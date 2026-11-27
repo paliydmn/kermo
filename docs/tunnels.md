@@ -87,7 +87,7 @@ A production server's tunnels are purple, like the server. Turning one on doesn'
 
 ## Where tunnels are kept
 
-With their server in `~/.config/dfilemanager/servers.json`, read at launch (temporary ones aren't kept anywhere):
+With their server in `~/.config/dfilemanager/servers.json`, read at launch, by **Reload Config** and before Kermo's next change to it (temporary ones aren't kept anywhere). One added by hand with `"on": true` listens from the next launch, or at once with **Turn On**:
 
 ```json
 "tunnels": [{ "name": "Postgres", "localPort": 15432, "host": "localhost", "port": 5432, "on": true }]

@@ -38,10 +38,10 @@ extension AppDelegate {
     }
 
     func saveTunnel(_ t: Tunnel, of s: SavedServer, on: Bool) {
-        guard let i = savedServers.firstIndex(where: { $0.id == s.id }),
-              let j = savedServers[i].tunnels.firstIndex(where: { $0.localPort == t.localPort }), savedServers[i].tunnels[j].on != on else { return }
-        savedServers[i].tunnels[j].on = on
-        Config.save("servers.json", savedServers)
+        editServers { all in
+            guard let i = all.firstIndex(where: { $0.id == s.id }), let j = all[i].tunnels.firstIndex(where: { $0.localPort == t.localPort }) else { return }
+            all[i].tunnels[j].on = on
+        }
         refreshSidebar()   // its rows keep a copy of the server: their menus would edit the old `on`
     }
 }
@@ -262,10 +262,17 @@ extension AppDelegate {
     /// it has open live on to where they went. One that was on but couldn't listen tries again.
     private func saveTunnelSheet(_ t: Tunnel, replacing old: Tunnel?, in s: SavedServer, turnOn now: Bool) {
         let st = old.flatMap { tunnels.state($0, of: s) }, listening = st?.listener != nil, failed = st != nil && !listening && t.on
-        guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
-        if let old, old.localPort != t.localPort { tunnels.moving(old, of: s) }
-        savedServers[i] = s
-        Config.save("servers.json", savedServers)
+        var problem: String? = "“\(s.title)” isn't saved"
+        guard editServers({ all in   // this tunnel, not the server as the sheet saw it: a hand edit in between stays
+            guard let i = all.firstIndex(where: { $0.id == s.id }) else { return }
+            var list = all[i].tunnels
+            if let j = list.firstIndex(where: { $0.localPort == old?.localPort }) { list[j] = t } else { list.append(t) }
+            problem = Tunnel.problem(list)   // against the file's tunnels now
+            guard problem == nil else { return }
+            if let old, old.localPort != t.localPort { tunnels.moving(old, of: s) }   // before `sync` sees it gone
+            all[i].tunnels = list
+        }) else { return }
+        if let problem { return tunnels.say("“\(t.title)” not saved: \(problem)", true) }
         if now || failed || (listening && old?.localPort != t.localPort) { turnOn(t, of: s) } else { releaseIdleServers() }
         refreshSidebar()
     }
@@ -280,9 +287,7 @@ extension AppDelegate {
             var c = Confirm("Delete the tunnel “\(t.title)”?", action: "Delete")
             (c.note, c.irreversible) = (info.isEmpty ? nil : info, true)
             if !asked, await confirm(c) != 0 { return }
-            guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
-            savedServers[i].tunnels.removeAll { $0.localPort == t.localPort }
-            Config.save("servers.json", savedServers)
+            editServers { all in all.indices.filter { all[$0].id == s.id }.forEach { all[$0].tunnels.removeAll { $0.localPort == t.localPort } } }
             releaseIdleServers()
         }
     }
@@ -454,8 +459,7 @@ extension AppDelegate {
             saved.on = true
             if let p = Tunnel.problem(savedServers[i].tunnels + [saved]) { return tunnels.say("“\(t.title)” not saved: \(p)", true) }
             tunnels.adopt(t, of: temporary, into: savedServers[i])   // first: `sync` then finds it the server's
-            savedServers[i].tunnels.append(saved)
-            Config.save("servers.json", savedServers)
+            guard editServers({ all in all.indices.filter { all[$0].id == s.id }.forEach { all[$0].tunnels.append(saved) } }) else { return }
             refreshSidebar()
             tunnels.say("“\(t.title)” saved as a tunnel of \(s.title)", false)
         }

@@ -182,7 +182,7 @@ extension AppDelegate {
                 SettingsRow(title: "usermenu.json", note: "The F2 menu", control: .buttons([("Edit…", "usermenu.edit")])),
                 SettingsRow(title: "validators.json", note: "Checks on save", control: .buttons([("Edit…", "validators.edit")])),
                 SettingsRow(title: "filters.json", note: "Quick filter presets (⌘/)", control: .buttons([("Edit…", "view.filterPresets.edit")])),
-                SettingsRow(title: "servers.json", note: "Saved servers and tunnels: New Server… and a server's Edit… write it; a hand edit waits for the next launch", control: .info),
+                SettingsRow(title: "servers.json", note: "Saved servers and tunnels: New Server… and a server's Edit… write it; a hand edit: Reload Config", control: .info),
             ]),
             ("Config folder", [
                 SettingsRow(title: "~/.config/dfilemanager", note: "Owner-only. Reload Config applies a changed keymap.json, user menu or checks",
