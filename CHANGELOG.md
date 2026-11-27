@@ -20,6 +20,7 @@ Release:
 - Under the mouse a server row keeps its name and state, and a card beside it shows the name in full, the address, what's open and its tunnels, with **SSH**, **SFTP**, **Tunnels ▸** and **⋯**: the buttons no longer cover the name in a narrow sidebar. → [Servers](docs/servers.md#server-rows-in-the-sidebar)
 
 ### Fixed
+- `servers.json` edited by hand while Kermo runs is no longer written over by Kermo's next change: Kermo reads it again first (and at **Reload Config**), and one with an error — half typed, or an entry that can't be read at launch — isn't saved over until it's fixed. A server's keys Kermo doesn't know — a newer Kermo's, your own — stay in the file. → [Saved servers](docs/configuration.md#saved-servers)
 - A tool made with **Make with AI…** that put its commands in `script` (meant for a file's name) loads: each runs as `command`, and Problems says to rename the field. The tool format now says which is which. → [Tools](docs/tools.md#the-fields-that-work-now)
 - curl's `-w '%{http_code}'` in a tool's command reaches curl as written: `%{…}`, like `${…}`, is no longer a Kermo placeholder anywhere in a tool.
 - Opening Kermo while another copy runs on the same settings — the Dock's app beside a test build — brings the running one forward with what you opened, instead of starting a second Kermo without your editor's drafts. → [Drafts](docs/viewer-editor.md#drafts)

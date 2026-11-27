@@ -105,10 +105,10 @@ extension AppDelegate {
     /// K4: a saved server without a key file gets this one (the server sheet shows it); a password in the Keychain may go.
     /// The connection already up stays as it is.
     private func afterKeyCopied(_ identity: String, name: String, to s: SavedServer) async {
-        if let i = savedServers.firstIndex(where: { $0.id == s.id }), savedServers[i].identityFile == nil,
+        if savedServers.contains(where: { $0.id == s.id && $0.identityFile == nil }),
            FileManager.default.isReadableFile(atPath: identity) {
-            savedServers[i].identityFile = (identity as NSString).abbreviatingWithTildeInPath
-            Config.save("servers.json", savedServers)
+            let file = (identity as NSString).abbreviatingWithTildeInPath
+            editServers { all in all.indices.filter { all[$0].id == s.id && all[$0].identityFile == nil }.forEach { all[$0].identityFile = file } }
             refreshSidebar()
         }
         guard SSHPasswords.has(s.target) else { return }

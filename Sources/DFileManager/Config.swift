@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// JSON files in ~/.config/dfilemanager/ (keymap, bookmarks, frecency, user menu) — dotfile-friendly.
@@ -34,9 +35,26 @@ enum Config {
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES), userInfo: [NSLocalizedDescriptionKey: why])
     }
 
-    /// Files there but unreadable at launch: never saved over this run (the user's file stays as it is).
+    /// Files there but unreadable: not saved over until read again (the user's file stays as it is).
     nonisolated(unsafe) private static var held = Set<String>()
     private static let heldLock = NSLock()
+    /// What this process last read or wrote, by path (`heldLock`): a file that isn't that now was changed outside Kermo.
+    nonisolated(unsafe) private static var known: [String: SHA256.Digest] = [:]
+
+    /// `name` changed since Kermo read or wrote it (a hand edit while it runs) — after the writes waiting are done. One
+    /// there but unreadable is; one gone isn't (Kermo writes it again, as before).
+    // ponytail: waits on the main thread for the writes queued (a hung network home stalls here); only servers.json's
+    // edits and Reload Config ask, both rare. Keep a pending-write count instead if that ever shows.
+    static func changedOutside(_ name: String, in dir: String = dir) -> Bool {
+        flush()
+        let path = (dir as NSString).appendingPathComponent(name)
+        let now: Data?
+        do { now = try contents(path) } catch { return true }
+        guard let now else { heldLock.withLock { _ = held.remove(path) }; return false }   // gone: nothing of the user's to keep
+        return heldLock.withLock { SHA256.hash(data: now) != known[path] }
+    }
+    /// Read again, it couldn't be taken: still the user's, not Kermo's to save over.
+    static func distrust(_ name: String, in dir: String = dir) { heldLock.withLock { known[(dir as NSString).appendingPathComponent(name)] = nil } }
 
     /// A file Kermo writes back itself (saved servers, bookmarks, pins, frecency, the Trash log): one it can't read is
     /// copied aside as it was before anything is saved over it; `problem` says so. nil value: no file, or unreadable.
@@ -47,6 +65,7 @@ enum Config {
             heldLock.withLock { _ = held.insert(path) }
             return (nil, "\(name) is there but couldn't be read (\(error.localizedDescription)), so it starts empty — and Kermo won't save over it until it's readable again")
         }
+        heldLock.withLock { (known[path], held) = (read.map { SHA256.hash(data: $0) }, held.subtracting([path])) }   // readable now: Kermo's to save again
         guard let data = read else { return (nil, nil) }
         do { return (try JSONDecoder().decode(T.self, from: data), nil) } catch {
             let why = ((error as? DecodingError).flatMap {
@@ -146,6 +165,7 @@ enum Config {
             chmod(dir, 0o700)
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
             chmod(path, 0o600)
+            heldLock.withLock { known[path] = SHA256.hash(data: data) }   // written: a write that failed leaves it the file's
             unwritten[path] = nil
         } catch {
             let why = error.localizedDescription

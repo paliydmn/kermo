@@ -103,6 +103,8 @@ extension AppDelegate {
     /// A server not saved yet gets Save & Connect (`connect`: which kind) besides Save; a saved one Delete….
     func editServer(_ server: SavedServer, title: String, connect: ServerSession.Kind = .ssh) {
         Task {
+            if Config.changedOutside("servers.json") { _ = reloadServers() }   // edited by hand: the sheet and Touch ID go by the file
+            let server = savedServers.first { $0.id == server.id } ?? server
             guard await ServerLock.authorize(server, "edit") else { return }
             showServerSheet(server, title: title, connect: connect)
         }
@@ -151,11 +153,18 @@ extension AppDelegate {
             let connecting = !saved && r == 0
             guard r == 0 || (!saved && r == 1) else { return }
             var s = form.typed
-            s.tunnels = savedServers.first { $0.id == s.id }?.tunnels ?? s.tunnels   // as they are now, not when the sheet opened
             guard s.issue == nil else { return NSSound.beep() }   // its buttons were off
-            let old = savedServers.first { $0.id == s.id }
-            if let i = savedServers.firstIndex(where: { $0.id == s.id }) { savedServers[i] = s } else { savedServers.append(s) }
-            Config.save("servers.json", savedServers)
+            var old: SavedServer?, stale = false
+            guard editServers({ all in   // the sheet's fields; its tunnels as they are now, not when the sheet opened
+                guard let i = all.firstIndex(where: { $0.id == s.id }) else { return all.append(s) }
+                var then = all[i]
+                then.tunnels = server.tunnels
+                guard then == server else { stale = true; return }   // changed by hand while the sheet was open: not written over
+                (old, s.tunnels, all[i]) = (all[i], all[i].tunnels, s)
+            }), !stale else {
+                if stale { showError(JobErrorMessage("“\(server.title)” changed in servers.json while you edited it: nothing saved. Edit it again.")) }
+                return
+            }
             let status = storePassword(old: old, new: s, typed: form.newPassword, forget: form.forget?.state == .on, forgetSudo: form.forgetSudo?.state == .on)
             if status != errSecSuccess {
                 showError(JobErrorMessage("Couldn't save the password in the Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")"))
@@ -195,8 +204,7 @@ extension AppDelegate {
             c.others = history == nil ? [] : ["Delete with File History"]
             let answer = await confirm(c)
             guard answer < c.buttons.count - 1 else { return }
-            savedServers.removeAll { $0.id == s.id }
-            Config.save("servers.json", savedServers)
+            guard editServers({ $0.removeAll { $0.id == s.id } }) else { return }   // still in the file: its password and history stay
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
             tools.unpinFromMenuBar(s)

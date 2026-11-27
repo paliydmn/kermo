@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let tunnels = Tunnels()
     /// The editor's drafts, taken in main.swift before anything else (`HandOff`); nil: take them at the launch (tests).
     var drafts: Result<DraftStore.Opened, Error>?
-    var savedServers: [SavedServer] = Config.noting(Config.loadEach("servers.json", as: SavedServer.self)) {
+    var savedServers: [SavedServer] = Config.noting(SavedServer.load()) {
         didSet {
             tunnels.sync(savedServers)   // a tunnel gone or changed: its port follows
             Task { await ServerLock.learn(again: true) }
@@ -531,6 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let g = GlobalKey.current, let c = keymap[g], !overrides.contains(where: { $0.id == c.id }) {   // its own key back (an entry deleted)
             problems += GlobalKey.clash([g]).map { ["keymap.json: \(c.id): " + $0] } ?? []
         }
+        if reportProblems, let p = reloadServers() { problems.append(p) }   // a hand edit (D-044)
         configProblems = Config.unreadable + problems   // the state files' once, at launch
         Config.unreadable = []
         if reportProblems {
@@ -1326,9 +1327,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Production: its color in the sidebar and the panel headers; delete, overwrite and move there ask first.
     private func setProd(_ s: SavedServer, _ on: Bool) {
-        guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
-        savedServers[i].prod = on
-        Config.save("servers.json", savedServers)
+        editServers { all in all.indices.filter { all[$0].id == s.id }.forEach { all[$0].prod = on } }
+        refreshSidebar()
+        prodChanged()
+    }
+
+    /// Every change Kermo makes to servers.json: the file as it is now first — edited by hand while Kermo runs, it's
+    /// read again (D-044) — then the change, then the save. false: the file can't be read — said, nothing changed in
+    /// Kermo or on disk, and the caller does nothing more (a delete doesn't forget the password, a tunnel doesn't listen).
+    @discardableResult func editServers(_ change: (inout [SavedServer]) -> Void) -> Bool {
+        var all = savedServers
+        if Config.changedOutside("servers.json") {
+            guard let read = readServers() else {
+                activePanel?.flash("servers.json has an error: this change isn't made, and Kermo doesn't save over the file. Fix it, then Reload Config.", error: true)
+                return false
+            }
+            all = read
+        }
+        change(&all)
+        take(all)
+        SavedServer.save(all)
+        return true
+    }
+
+    /// Reload Config: servers.json as it is on disk now, if it changed; why it can't be read, else nil.
+    func reloadServers() -> String? {
+        guard Config.changedOutside("servers.json") else { return nil }
+        guard let read = readServers() else { return "servers.json has an error: Kermo doesn't save over it until it's fixed" }
+        take(read)
+        return nil
+    }
+
+    /// The file's servers; nil: it can't be read, and stays the user's — not saved over until it reads again.
+    private func readServers() -> [SavedServer]? {
+        let (kept, problem) = Config.loadEach("servers.json", as: KeptServer.self)
+        if problem != nil { Config.distrust("servers.json"); return nil }
+        return SavedServer.take(kept)
+    }
+
+    /// The servers as they are now, in one go (one `sync` of the tunnels). Locked ones, or their addresses, changed by
+    /// hand: every unlock ends, as when the screen locks — Touch ID again, and locked servers' tunnels stop.
+    private func take(_ all: [SavedServer]) {
+        let locks = { (l: [SavedServer]) in Set(l.filter(\.locked).map { "\($0.id) \(ServerRow.key($0.target))" }) }
+        let relock = locks(all) != locks(savedServers)
+        savedServers = all
+        if relock { ServerLock.relock() }
         refreshSidebar()
         prodChanged()
     }

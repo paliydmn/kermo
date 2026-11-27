@@ -71,7 +71,7 @@ Keys set there go into `keymap.json`, only for the commands you changed, and wor
 
 ## Saved servers
 
-`servers.json` is edited for you by the server sheets. You can edit it by hand, but quit Kermo first: it is read at launch and rewritten on every change. Only `host` is required.
+`servers.json` is edited for you by the server sheets. You can edit it by hand while Kermo runs: **Reload Config** reads it again, and so does Kermo's next change to it before saving, so your edit stays. If the file can't be read then (half typed), Kermo says so and doesn't save over it until it can. A server changed in the file while its **Edit…** sheet is open isn't saved over: Kermo says so — edit it again. Making a server locked, or changing a locked one's address, by hand ends every unlock, as locking the screen does. A server's keys Kermo doesn't know (a newer Kermo's, your own) are kept as they are; inside a tunnel they aren't yet. Only `host` is required.
 
 | Key | Meaning |
 |---|---|
@@ -81,7 +81,7 @@ Keys set there go into `keymap.json`, only for the commands you changed, and wor
 | `prod` | `true` marks the server as [production](servers.md#mark-a-server-as-production) |
 | `tunnels` | The server's [tunnels](tunnels.md#where-tunnels-are-kept) |
 
-Passwords are not in the file: they are in the Keychain. An entry that can't be read (`"port": "22"` in quotes, a misspelled `true`) is left out, the others load, and the file as it was is copied to `servers.json.broken`; see above.
+Passwords are not in the file: they are in the Keychain. An entry that can't be read (`"port": "22"` in quotes, a misspelled `true`) is left out, the others load, and the file as it was is copied to `servers.json.broken`; see above. Until the file reads whole again, Kermo saves no change to it: each says so, and nothing changes in Kermo either.
 
 ## Options
 
