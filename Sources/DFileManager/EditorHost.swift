@@ -896,11 +896,14 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     /// Launch: the editor's session as it was — its tabs in order (a server's parked: nothing connects), their drafts, the
     /// shown one, the window if it was up. Another Kermo keeping the drafts, or a newer one's: none kept this time, and
     /// the window says so; one that couldn't be read is moved aside, said once, and the editor starts empty.
-    static func restore(_ dir: String, onServer: @escaping OnServer) {
+    static func restore(_ dir: String, onServer: @escaping OnServer) { restore(Result { try DraftStore.open(dir) }, onServer: onServer) }
+
+    /// `restore` with the drafts already taken (main.swift, before the launch: `HandOff`).
+    static func restore(_ drafts: Result<DraftStore.Opened, Error>, onServer: @escaping OnServer) {
         let h = tabs
         h.onServer = onServer
-        let opened: (store: DraftStore, session: EditorSession, damaged: String?)
-        do { opened = try DraftStore.open(dir) } catch {
+        let opened: DraftStore.Opened
+        do { opened = try drafts.get() } catch {
             h.draftsOff = switch error {
                 case DraftStore.Failure.locked: "another Kermo keeps them"
                 case DraftStore.Failure.newer: "saved by a newer Kermo"
