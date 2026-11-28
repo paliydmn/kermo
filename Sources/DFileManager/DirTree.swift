@@ -30,6 +30,7 @@ final class DirTree: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         let t = DirTree(parent: window, showHidden: showHidden, onChoose: onChoose)
         current = t
         t.panel.setFrame(window.convertToScreen(view.convert(view.bounds, to: nil)), display: false)
+        t.panel.appearance = window.appearance   // Kermo's theme, as the window's (D-200)
         window.addChildWindow(t.panel, ordered: .above)
         t.panel.makeKeyAndOrderFront(nil)
         t.reveal(path)
@@ -49,6 +50,7 @@ final class DirTree: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
         let col = NSTableColumn(identifier: .init("name"))
         outline.addTableColumn(col)
         outline.outlineTableColumn = col
+        outline.autoresizesOutlineColumn = false   // the column stays the view's width: a deep long name truncates, not past the edge (D-200)
         outline.headerView = nil
         outline.style = .plain
         outline.rowHeight = 20
@@ -185,6 +187,8 @@ final class DirTree: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, N
             c.textField = tf
             NSLayoutConstraint.activate([
                 iv.leadingAnchor.constraint(equalTo: c.leadingAnchor),
+                iv.widthAnchor.constraint(equalToConstant: 16),   // else the icon takes the row's spare width (D-200)
+                iv.heightAnchor.constraint(equalToConstant: 16),
                 iv.centerYAnchor.constraint(equalTo: c.centerYAnchor),
                 tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 4),
                 tf.trailingAnchor.constraint(equalTo: c.trailingAnchor),

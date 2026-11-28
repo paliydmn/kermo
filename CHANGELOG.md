@@ -27,6 +27,8 @@ Release:
 - **Thresholds…** takes a decimal comma (`85,5`), and a warning past the critical level says so instead of being taken.
 - **Open Kermo at login** with something watched starts in the menu bar, without the main window. → [Tools](docs/tools.md)
 - VoiceOver reads a list's state as its words (not "attachment"), and the list by its name.
+- **Folder Tree** rows show each name right after its folder icon, cut at the panel's edge, in Kermo's theme: names were pushed to the right and cut off, on a light panel over a dark Kermo.
+- A FAT32 or exFAT disk in **Locations** and **Volumes…** shows its free space, not "0 KB free" with a full red bar.
 - `servers.json` edited by hand while Kermo runs is no longer written over by Kermo's next change: Kermo reads it again first (and at **Reload Config**), and one with an error — half typed, or an entry that can't be read at launch — isn't saved over until it's fixed. A server's keys Kermo doesn't know — a newer Kermo's, your own — stay in the file. → [Saved servers](docs/configuration.md#saved-servers)
 - A tool made with **Make with AI…** that put its commands in `script` (meant for a file's name) loads: each runs as `command`, and Problems says to rename the field. The tool format now says which is which. → [Tools](docs/tools.md#the-fields-that-work-now)
 - curl's `-w '%{http_code}'` in a tool's command reaches curl as written: `%{…}`, like `${…}`, is no longer a Kermo placeholder anywhere in a tool.

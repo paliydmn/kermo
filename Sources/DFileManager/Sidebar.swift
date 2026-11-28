@@ -299,10 +299,13 @@ enum SidebarModel {
             guard m.local else { return Volume(path: m.path, name: (m.path as NSString).lastPathComponent, free: m.free, total: m.total, ejectable: true, device: m.device) }
             let v = try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys)
             return Volume(path: m.path, name: v?.volumeName ?? (m.path as NSString).lastPathComponent,
-                          free: v?.volumeAvailableCapacityForImportantUsage, total: v?.volumeTotalCapacity.map(Int64.init), ejectable: v?.volumeIsEjectable == true,
+                          free: freeSpace(important: v?.volumeAvailableCapacityForImportantUsage, m), total: v?.volumeTotalCapacity.map(Int64.init) ?? m.total, ejectable: v?.volumeIsEjectable == true,
                           device: m.device)
         }
     }
+
+    /// "Important usage" counts what APFS would purge; FAT32 and exFAT say 0 there: then the kernel's figure (D-074).
+    static func freeSpace(important: Int64?, _ m: Mount) -> Int64 { important.flatMap { $0 > 0 ? $0 : nil } ?? m.free }
 
     /// Finder's color order for ⌃1…⌃7 and the dots: red, orange, yellow, green, blue, purple, gray.
     static let tagColors = [6, 7, 5, 2, 4, 3, 1]
