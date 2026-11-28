@@ -45,8 +45,8 @@ extension AppDelegate {
             let rows = await Blocking.run(.userInitiated) { () -> [(path: String, title: String, subtitle: String, eject: Bool)] in
                 return SidebarModel.mounts().map { m in
                     let v = m.local ? try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys) : nil
-                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { ByteCountFormatter.short($0) } ?? "?" : ByteCountFormatter.short(m.free)
-                    let total = m.local ? v?.volumeTotalCapacity.map { ByteCountFormatter.short(Int64($0)) } ?? "?" : ByteCountFormatter.short(m.total)
+                    let free = ByteCountFormatter.short(m.local ? SidebarModel.freeSpace(important: v?.volumeAvailableCapacityForImportantUsage, m) : m.free)
+                    let total = ByteCountFormatter.short(m.local ? v?.volumeTotalCapacity.map(Int64.init) ?? m.total : m.total)
                     return (m.path, v?.volumeName ?? (m.path as NSString).lastPathComponent,
                             "\(m.path) · \(free) free of \(total) · \(v?.volumeLocalizedFormatDescription ?? m.type)", v?.volumeIsEjectable == true || !m.local)
                 }
