@@ -14,6 +14,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.3] - 2026-11-28
+
 ### Changed
 - The shell command is now **`kermo`** (**Kermo ▸ Install “kermo” Command**): macOS 27 has its own `fm`, which Kermo's old link hid. If you installed `fm`, choose that menu item once: it removes the old `fm` link when it points into Kermo, and no other. → [The `kermo` command](docs/commands.md#the-kermo-command)
 - In ⇧⌘P a server's name typed from its start comes first and is chosen, not a command found by a few of its letters. → [Search](docs/window.md#search)
@@ -600,7 +602,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.3...HEAD
+[2.3]: https://github.com/paliydmn/kermo/releases/tag/v2.3
 [2.2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.2.1
 [2.2]: https://github.com/paliydmn/kermo/releases/tag/v2.2
 [2.1.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1.1
